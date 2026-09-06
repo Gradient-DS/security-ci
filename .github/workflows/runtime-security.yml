@@ -96,7 +96,11 @@ jobs:
           cat .falco/ci-egress.yaml
 
       - name: Start Falco
-        uses: falcosecurity/falco-actions/start@v0
+        # Pinned to a commit: falcosecurity/falco-actions publishes no releases
+        # and no tags at all, so the `@v0` the plan named has never been
+        # resolvable. A SHA is the only immutable reference available, and it
+        # is what this repo requires of third-party actions anyway.
+        uses: falcosecurity/falco-actions/start@558a3ceeee9403e1c875ffbeb704c34c93e24752
         with:
           mode: live
           falco-version: ${{ inputs.falco-version }}
@@ -141,7 +145,7 @@ jobs:
         continue-on-error: true
 
       - name: Stop Falco
-        uses: falcosecurity/falco-actions/stop@v0
+        uses: falcosecurity/falco-actions/stop@558a3ceeee9403e1c875ffbeb704c34c93e24752
         with:
           mode: live
           verbose: true
