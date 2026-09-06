@@ -6,8 +6,14 @@ requires-python = ">=3.12"
 dependencies = ["PyYAML>=6.0.2"]
 
 [dependency-groups]
-dev = ["pytest>=8.3.0"]
+# pytest-egress-guard ships from this repo; installing it here is what puts
+# its `deny_egress` fixture on the pytest11 entry point, so CI exercises the
+# same delivery path a consuming repo uses rather than a local import.
+dev = ["pytest>=8.3.0", "pytest-egress-guard"]
+
+[tool.uv.sources]
+pytest-egress-guard = { path = "packages/pytest-egress-guard", editable = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/pytest-egress-guard/tests"]
 pythonpath = ["."]
