@@ -16,6 +16,11 @@
 - list: ci_guarded_containers
   items: [api-ci]
 
+#: A throwaway container the workflow drives on purpose, so every run proves
+#: the sensor is still reporting. Never a real service.
+- list: ci_selftest_containers
+  items: [falco-selftest]
+
 # 127.0.0.0/8, not 127.0.0.1/32: Docker's embedded DNS resolver lives on
 # 127.0.0.11, and every name lookup inside a compose network goes to it.
 - list: ci_allowed_networks
@@ -84,3 +89,19 @@
     proc=%proc.name cmdline=%proc.cmdline)
   priority: CRITICAL
   tags: [ci, lfi]
+
+# Falco writes its output file only when it has something to write, so a run
+# that finds nothing and a sensor that silently stopped working produce exactly
+# the same evidence: none. This rule is what tells them apart. The workflow
+# makes one deliberate connection from a throwaway container and requires the
+# event to come back; no event means the sensor is not to be trusted, whatever
+# the rest of the run reported.
+- rule: Falco self-test egress
+  desc: Deliberate egress from a throwaway container, proving the sensor reports.
+  condition: >
+    container.name in (ci_selftest_containers) and evt.type = connect
+  output: >
+    Falco self-test (container=%container.name target=%evt.arg.addr
+    result=%evt.res)
+  priority: NOTICE
+  tags: [ci, selftest]
