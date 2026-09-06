@@ -9,6 +9,8 @@
 # it was attempted.  Falco watches the syscall, so it sees the attempt whether
 # or not it succeeded, and whichever language made it.
 
+# 0.44.x dropped syscall enter events, which is why no rule here filters on
+# `evt.dir`: it would always be true and Falco warns about it.
 - required_engine_version: 0.31.0
 
 - list: ci_guarded_containers
@@ -33,7 +35,7 @@
     request-influenced data reached a sink that fetches.  This is the control
     that survives a dependency swap: it watches the syscall, not the library.
   condition: >
-    evt.type = connect and evt.dir = < and
+    evt.type = connect and
     container.name in (ci_guarded_containers) and
     fd.l4proto in (tcp, udp) and
     not fd.snet in (ci_allowed_networks)

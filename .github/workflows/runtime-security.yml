@@ -34,13 +34,11 @@ on:
         default: 'http://localhost:8080/api/healthz'
       falco-version:
         description: >-
-          Pinned deliberately. falco-actions pulls falcosecurity/falco-no-driver,
-          and that Docker Hub repository stopped publishing at 0.39.2 in November
-          2024 -- `latest` there is that same build, not upstream's current
-          release. Pinning says which build we tested the rules against.
+          Tag of the maintained `falcosecurity/falco` image. Pinned so the build
+          the rules were validated against is stated rather than drifting.
         type: string
         required: false
-        default: '0.39.2'
+        default: '0.44.1'
       tooling-ref:
         description: >-
           Ref of Gradient-DS/.github to take the Falco rules from. Defaults to
@@ -65,11 +63,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # falco-actions/stop reads this run's jobs from the API to timestamp
-      # findings against steps. An explicit permissions block sets every scope
-      # it does not name to none, so without this the action's `jq` fails on an
-      # error body: "Cannot iterate over null".
-      actions: read
     steps:
       - uses: actions/checkout@v6
 
@@ -100,58 +93,51 @@ jobs:
           PY
           cat .falco/ci-egress.yaml
 
-      - name: Start Falco
-        # Pinned to a commit: falcosecurity/falco-actions publishes no releases
-        # and no tags at all, so the `@v0` the plan named has never been
-        # resolvable. A SHA is the only immutable reference available, and it
-        # is what this repo requires of third-party actions anyway.
-        uses: falcosecurity/falco-actions/start@558a3ceeee9403e1c875ffbeb704c34c93e24752
-        with:
-          mode: live
-          falco-version: ${{ inputs.falco-version }}
-          # Singular `rule`, not `rules` -- the action's own input name.
-          # Absolute, because the action hands this straight to `docker -v`,
-          # which reads a relative path as a *named volume* and fails with
-          # "includes invalid characters for a local volume name".
-          custom-rule-file: ${{ github.workspace }}/.falco/ci-egress.yaml
-          # Off because the action's own default is broken at this commit: it
-          # mounts `${{ github.action_path }}/rules/falco_cicd_rules.yaml`, but
-          # that file lives at the repository root, not under `start/`. Docker
-          # turns the missing path into an empty directory and Falco exits with
-          # "basic_filebuf::underflow error reading the file: Is a directory" --
-          # which is why the sensor kept dying mid-run. Reproduced directly
-          # against the 0.39.2 image.
-          #
-          # Losing them costs little here: they target CI supply-chain
-          # behaviour, while this gate is aimed at the application container,
-          # and fewer loaded rules means less first-match shadowing of ours.
-          cicd-rules: false
-          verbose: true
-
-      - name: Confirm the sensor is running
-        # The action waits for the container and then exits; it does not check
-        # that Falco stayed up. Everything after this is only as trustworthy as
-        # the sensor, so failures belong here rather than at the end.
+      - name: Start the sensor
+        # Falco is run directly rather than through falcosecurity/falco-actions.
+        # That action publishes no releases or tags, mounts its own default rules
+        # from a path that does not exist, and hardcodes the
+        # `falcosecurity/falco-no-driver` image whose Docker Hub repository
+        # stopped publishing at 0.39.2 in November 2024 -- a probe from then
+        # exits 1 against the runner's current kernel. Ten lines of `docker run`
+        # buys a maintained image and a sensor we can actually diagnose.
+        #
+        # Deliberately no `--rm`: when the sensor dies, its log and exit code are
+        # the only evidence of why, and `--rm` destroys both.
+        env:
+          FALCO_VERSION: ${{ inputs.falco-version }}
         run: |
-          if ! docker ps --format '{{.Names}}' | grep -qx falco; then
-            echo "::error::Falco is not running after start"
-            exit 1
-          fi
-          # Streamed to a file, because the container runs with `--rm`: once
-          # Falco exits, `docker logs` has nothing left to tell us and the
-          # reason it died goes with it. The action's own readiness loop only
-          # waits for `docker ps`, which is true well before rule loading
-          # finishes, so its log dump is always cut short.
-          nohup docker logs -f falco > /tmp/falco-container.log 2>&1 &
-          # Records the die event with its exit code. `--rm` removes the
-          # container before anything can inspect it, so this is the only way to
-          # learn whether it exited cleanly, crashed, or was killed.
-          nohup docker events --filter 'container=falco' --filter 'event=die' \
-            --format '{{.Time}} {{.Status}} exitCode={{index .Actor.Attributes "exitCode"}}' \
-            > /tmp/falco-events-docker.log 2>&1 &
-          sleep 10
-          echo "--- falco log after 10s ---"
-          cat /tmp/falco-container.log
+          set -euo pipefail
+          docker run -d --name falco --privileged \
+            -v /tmp:/tmp \
+            -v /var/run/docker.sock:/host/var/run/docker.sock \
+            -v /proc:/host/proc:ro \
+            -v "${{ github.workspace }}/.falco/ci-egress.yaml:/etc/falco/rules.d/custom_rules.yaml:ro" \
+            "falcosecurity/falco:${FALCO_VERSION}" \
+            falco -o "json_output=true" \
+                  -o "file_output.enabled=true" \
+                  -o "file_output.keep_alive=false" \
+                  -o "file_output.filename=${FALCO_EVENTS}" \
+                  -o "engine.kind=modern_ebpf"
+
+          # Ready means the syscall source is open, not merely that the
+          # container exists. Waiting on `docker ps` is what hid the old
+          # failures: the container was up while Falco was still dying.
+          for _ in $(seq 1 45); do
+            if docker logs falco 2>&1 | grep -q "Opening 'syscall' source"; then
+              echo "sensor ready"
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' falco)" != "true" ]; then
+              echo "::error::Falco exited before opening the syscall source (exit $(docker inspect -f '{{.State.ExitCode}}' falco))"
+              docker logs falco 2>&1 | tail -50
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::Falco never opened the syscall source"
+          docker logs falco 2>&1 | tail -50
+          exit 1
 
       - name: Bring up the egress-denied stack
         run: docker compose -f "${{ inputs.compose-file }}" up -d --build
@@ -189,30 +175,20 @@ jobs:
         run: ${{ inputs.test-command }}
         continue-on-error: true
 
-      - name: Confirm the sensor survived the run
+      - name: Stop the sensor and keep its evidence
         if: always()
-        # A sensor that died mid-run reports nothing, which looks exactly like a
-        # clean run. The captured log is the only place its reason survives,
-        # since the container runs with `--rm`.
         run: |
-          if docker ps --format '{{.Names}}' | grep -qx falco; then
-            echo "sensor still running"
+          set -uo pipefail
+          if [ "$(docker inspect -f '{{.State.Running}}' falco 2>/dev/null)" = "true" ]; then
+            echo "sensor survived the run"
+            docker stop falco >/dev/null
           else
-            echo "::error::Falco exited during the run"
-            ls -l /tmp/falco_events.json 2>&1 || echo "no event file"
+            echo "::error::Falco exited during the run (exit $(docker inspect -f '{{.State.ExitCode}}' falco 2>/dev/null || echo '?'))"
           fi
-          echo "--- captured sensor log ---"
-          cat /tmp/falco-container.log 2>/dev/null || echo "(no captured log)"
-          echo "--- docker die events ---"
-          cat /tmp/falco-events-docker.log 2>/dev/null || echo "(none)"
-          echo "--- kernel messages ---"
-          sudo dmesg 2>/dev/null | grep -iE "falco|oom|killed process|segfault|bpf" | tail -20 || echo "(none)"
-
-      - name: Stop Falco
-        uses: falcosecurity/falco-actions/stop@558a3ceeee9403e1c875ffbeb704c34c93e24752
-        with:
-          mode: live
-          verbose: true
+          docker logs falco > /tmp/falco-container.log 2>&1 || true
+          echo "--- sensor log (tail) ---"
+          tail -40 /tmp/falco-container.log || true
+          docker rm -f falco >/dev/null 2>&1 || true
 
       - name: Collect Falco findings
         id: falco_findings
@@ -284,7 +260,6 @@ jobs:
           path: |
             /tmp/falco_events.json
             /tmp/falco-container.log
-            /tmp/falco-events-docker.log
           if-no-files-found: warn
 
       - name: Enforce runtime gates
