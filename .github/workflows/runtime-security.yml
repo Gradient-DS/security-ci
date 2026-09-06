@@ -93,6 +93,37 @@ jobs:
           PY
           cat .falco/ci-egress.yaml
 
+      - name: Bring up the egress-denied stack
+        run: docker compose -f "${{ inputs.compose-file }}" up -d --build
+
+      - name: Wait for health
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sSf "${{ inputs.health-url }}" >/dev/null; then
+              echo "stack healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::stack never became healthy"
+          docker compose -f "${{ inputs.compose-file }}" ps
+          docker compose -f "${{ inputs.compose-file }}" logs --no-color --tail=200
+          exit 1
+
+      - name: Confirm the stack really has no egress
+        # Without this the whole job can pass because the network was never
+        # sealed, which looks identical to passing because nothing fetched.
+        env:
+          GUARDED: ${{ inputs.guarded-containers }}
+        run: |
+          set -euo pipefail
+          first="${GUARDED%%,*}"
+          if docker exec "$first" python -c "import socket; socket.create_connection(('1.1.1.1', 80), 3)" 2>/dev/null; then
+            echo "::error::$first reached 1.1.1.1 -- the compose network is not internal, so this gate proves nothing"
+            exit 1
+          fi
+          echo "$first has no route off-host, as required"
+
       - name: Start the sensor
         # Falco is run directly rather than through falcosecurity/falco-actions.
         # That action publishes no releases or tags, mounts its own default rules
@@ -104,6 +135,13 @@ jobs:
         #
         # Deliberately no `--rm`: when the sensor dies, its log and exit code are
         # the only evidence of why, and `--rm` destroys both.
+        #
+        # Started here rather than before the stack, so it watches the test
+        # window and nothing else. Starting it first meant it reported the image
+        # build (`apk`, `adduser`, `esbuild` tripping "Drop and execute new
+        # binary in container") and, worse, the seal check above -- the gate
+        # flagging its own proof that the network is sealed. A gate whose own
+        # setup trips it can never be turned on.
         env:
           FALCO_VERSION: ${{ inputs.falco-version }}
         run: |
@@ -138,37 +176,6 @@ jobs:
           echo "::error::Falco never opened the syscall source"
           docker logs falco 2>&1 | tail -50
           exit 1
-
-      - name: Bring up the egress-denied stack
-        run: docker compose -f "${{ inputs.compose-file }}" up -d --build
-
-      - name: Wait for health
-        run: |
-          for _ in $(seq 1 30); do
-            if curl -sSf "${{ inputs.health-url }}" >/dev/null; then
-              echo "stack healthy"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::stack never became healthy"
-          docker compose -f "${{ inputs.compose-file }}" ps
-          docker compose -f "${{ inputs.compose-file }}" logs --no-color --tail=200
-          exit 1
-
-      - name: Confirm the stack really has no egress
-        # Without this the whole job can pass because the network was never
-        # sealed, which looks identical to passing because nothing fetched.
-        env:
-          GUARDED: ${{ inputs.guarded-containers }}
-        run: |
-          set -euo pipefail
-          first="${GUARDED%%,*}"
-          if docker exec "$first" python -c "import socket; socket.create_connection(('1.1.1.1', 80), 3)" 2>/dev/null; then
-            echo "::error::$first reached 1.1.1.1 -- the compose network is not internal, so this gate proves nothing"
-            exit 1
-          fi
-          echo "$first has no route off-host, as required"
 
       - name: Drive traffic
         id: traffic
