@@ -21,9 +21,23 @@ import sys
 RESULTS = ("success", "failure", "cancelled", "skipped")
 
 
-def decide(*, relevant: bool, event: str, audit_result: str) -> tuple[bool, str]:
-    """Return (passed, reason)."""
-    expected_to_run = relevant or event == "schedule"
+def decide(*, relevant: str, event: str, audit_result: str) -> tuple[bool, str]:
+    """Return (passed, reason).
+
+    ``relevant`` arrives as a raw workflow output, so it can be the empty
+    string: that is what ``needs.changes.outputs.relevant`` evaluates to when
+    the ``changes`` job itself failed. Unknown relevance is not "not relevant".
+    """
+    if relevant not in ("true", "false"):
+        if audit_result == "success":
+            return True, "Runtime security passed (relevance was not reported)."
+        return False, (
+            "The changes job did not report whether runtime paths changed "
+            f"(relevant={relevant!r}, audit={audit_result!r}). Without that "
+            "answer there is no basis for passing -- fix the changes job."
+        )
+
+    expected_to_run = relevant == "true" or event == "schedule"
 
     if not expected_to_run:
         if audit_result in ("skipped", ""):
@@ -50,13 +64,15 @@ def decide(*, relevant: bool, event: str, audit_result: str) -> tuple[bool, str]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--relevant", required=True, choices=("true", "false"))
+    # Deliberately not `choices=`: an empty value is a state the gate must
+    # explain, not an argparse usage error.
+    parser.add_argument("--relevant", required=True)
     parser.add_argument("--event", required=True)
     parser.add_argument("--audit-result", required=True, default="")
     args = parser.parse_args(argv)
 
     passed, reason = decide(
-        relevant=args.relevant == "true",
+        relevant=args.relevant,
         event=args.event,
         audit_result=args.audit_result,
     )
