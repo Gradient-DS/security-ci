@@ -1,0 +1,3 @@
+from .plugin import DEFAULT_ALLOWED_HOSTS, EgressDenied, SENSITIVE_PREFIXES
+
+__all__ = ["EgressDenied", "SENSITIVE_PREFIXES", "DEFAULT_ALLOWED_HOSTS"]
