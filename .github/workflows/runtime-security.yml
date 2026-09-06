@@ -1,0 +1,298 @@
+name: Runtime Security (reusable)
+
+# Layer 1 and layer 2 of the runtime gates, on the caller's own compose stack.
+#
+# The static suite in security-source.yml cannot catch what this catches, and
+# not for want of tuning: the incident this exists for had its taint source in
+# database content and its sink inside a third-party library, which is a shape
+# stock SAST rules structurally do not follow. This watches behaviour instead --
+# the stack is brought up with no route off-host, and Falco reports any syscall
+# that reached for one.
+
+on:
+  workflow_call:
+    inputs:
+      compose-file:
+        description: 'Compose file to bring up. Its network must deny egress.'
+        type: string
+        required: true
+      guarded-containers:
+        description: >-
+          Comma-separated container names to watch. Falco findings are counted
+          per container, so a name that does not match anything in the stack
+          means the gate silently watches nothing.
+        type: string
+        required: true
+      test-command:
+        description: 'Command that drives traffic through the stack.'
+        type: string
+        required: true
+      health-url:
+        description: 'Polled until the stack is up.'
+        type: string
+        required: false
+        default: 'http://localhost:8080/api/healthz'
+      falco-version:
+        description: >-
+          Tag of the maintained `falcosecurity/falco` image. Pinned so the build
+          the rules were validated against is stated rather than drifting.
+        type: string
+        required: false
+        default: '0.44.1'
+      tooling-ref:
+        description: >-
+          Ref of Gradient-DS/.github to take the Falco rules from. Defaults to
+          the release tag; override to test a paired workflow + rules change on
+          a branch.
+        type: string
+        required: false
+        default: 'v1'
+      enforce:
+        description: 'Whether findings fail the job.'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  TOOLING_PATH: .security-tooling
+  FALCO_EVENTS: /tmp/falco_events.json
+
+jobs:
+  runtime-audit:
+    name: Runtime egress and sensitive-read audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Gradient-DS/.github
+          ref: ${{ inputs.tooling-ref }}
+          path: ${{ env.TOOLING_PATH }}
+
+      - name: Point the shared rules at this repo's containers
+        env:
+          GUARDED: ${{ inputs.guarded-containers }}
+        run: |
+          set -euo pipefail
+          mkdir -p .falco
+          cp "${TOOLING_PATH}/falco/rules/ci-egress.yaml" .falco/ci-egress.yaml
+          python3 - <<'PY'
+          import os, pathlib
+          names = [n.strip() for n in os.environ["GUARDED"].split(",") if n.strip()]
+          if not names:
+              raise SystemExit("guarded-containers is empty; the gate would watch nothing")
+          p = pathlib.Path(".falco/ci-egress.yaml")
+          text = p.read_text()
+          old = "items: [api-ci]"
+          if old not in text:
+              raise SystemExit(f"rules file no longer contains {old!r}; refusing to guess")
+          p.write_text(text.replace(old, "items: [" + ", ".join(names) + "]", 1))
+          PY
+          cat .falco/ci-egress.yaml
+
+      - name: Start the sensor
+        # Falco is run directly rather than through falcosecurity/falco-actions.
+        # That action publishes no releases or tags, mounts its own default rules
+        # from a path that does not exist, and hardcodes the
+        # `falcosecurity/falco-no-driver` image whose Docker Hub repository
+        # stopped publishing at 0.39.2 in November 2024 -- a probe from then
+        # exits 1 against the runner's current kernel. Ten lines of `docker run`
+        # buys a maintained image and a sensor we can actually diagnose.
+        #
+        # Deliberately no `--rm`: when the sensor dies, its log and exit code are
+        # the only evidence of why, and `--rm` destroys both.
+        env:
+          FALCO_VERSION: ${{ inputs.falco-version }}
+        run: |
+          set -euo pipefail
+          docker run -d --name falco --privileged \
+            -v /tmp:/tmp \
+            -v /var/run/docker.sock:/host/var/run/docker.sock \
+            -v /proc:/host/proc:ro \
+            -v "${{ github.workspace }}/.falco/ci-egress.yaml:/etc/falco/rules.d/custom_rules.yaml:ro" \
+            "falcosecurity/falco:${FALCO_VERSION}" \
+            falco -o "json_output=true" \
+                  -o "file_output.enabled=true" \
+                  -o "file_output.keep_alive=false" \
+                  -o "file_output.filename=${FALCO_EVENTS}" \
+                  -o "engine.kind=modern_ebpf"
+
+          # Ready means the syscall source is open, not merely that the
+          # container exists. Waiting on `docker ps` is what hid the old
+          # failures: the container was up while Falco was still dying.
+          for _ in $(seq 1 45); do
+            if docker logs falco 2>&1 | grep -q "Opening 'syscall' source"; then
+              echo "sensor ready"
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' falco)" != "true" ]; then
+              echo "::error::Falco exited before opening the syscall source (exit $(docker inspect -f '{{.State.ExitCode}}' falco))"
+              docker logs falco 2>&1 | tail -50
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::Falco never opened the syscall source"
+          docker logs falco 2>&1 | tail -50
+          exit 1
+
+      - name: Bring up the egress-denied stack
+        run: docker compose -f "${{ inputs.compose-file }}" up -d --build
+
+      - name: Wait for health
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sSf "${{ inputs.health-url }}" >/dev/null; then
+              echo "stack healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::stack never became healthy"
+          docker compose -f "${{ inputs.compose-file }}" ps
+          docker compose -f "${{ inputs.compose-file }}" logs --no-color --tail=200
+          exit 1
+
+      - name: Confirm the stack really has no egress
+        # Without this the whole job can pass because the network was never
+        # sealed, which looks identical to passing because nothing fetched.
+        env:
+          GUARDED: ${{ inputs.guarded-containers }}
+        run: |
+          set -euo pipefail
+          first="${GUARDED%%,*}"
+          if docker exec "$first" python -c "import socket; socket.create_connection(('1.1.1.1', 80), 3)" 2>/dev/null; then
+            echo "::error::$first reached 1.1.1.1 -- the compose network is not internal, so this gate proves nothing"
+            exit 1
+          fi
+          echo "$first has no route off-host, as required"
+
+      - name: Drive traffic
+        id: traffic
+        run: ${{ inputs.test-command }}
+        continue-on-error: true
+
+      - name: Stop the sensor and keep its evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ "$(docker inspect -f '{{.State.Running}}' falco 2>/dev/null)" = "true" ]; then
+            echo "sensor survived the run"
+            docker stop falco >/dev/null
+          else
+            echo "::error::Falco exited during the run (exit $(docker inspect -f '{{.State.ExitCode}}' falco 2>/dev/null || echo '?'))"
+          fi
+          docker logs falco > /tmp/falco-container.log 2>&1 || true
+          echo "--- sensor log (tail) ---"
+          tail -40 /tmp/falco-container.log || true
+          docker rm -f falco >/dev/null 2>&1 || true
+
+      - name: Collect Falco findings
+        id: falco_findings
+        if: always()
+        env:
+          GUARDED: ${{ inputs.guarded-containers }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import collections, json, os, pathlib
+
+          guarded = {n.strip() for n in os.environ["GUARDED"].split(",") if n.strip()}
+          events = pathlib.Path(os.environ["FALCO_EVENTS"])
+
+          # Counted per container, not by grepping our rules' output text.
+          # Falco stops at the first rule that matches an event and its own
+          # falco_rules.yaml loads before rules.d/, so an upstream rule such as
+          # "Read sensitive file untrusted" claims /etc/shadow first and ours
+          # never sees it. Scoping to the container catches the finding
+          # whichever rule reported it.
+          hits = collections.Counter()
+          if events.exists():
+              for line in events.read_text().splitlines():
+                  line = line.strip()
+                  if not line:
+                      continue
+                  try:
+                      event = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+                  name = (event.get("output_fields") or {}).get("container.name")
+                  if name in guarded:
+                      hits[(name, event.get("rule", "?"))] += 1
+
+          total = sum(hits.values())
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"hits={total}\n")
+              # No event file means the sensor cannot be shown to have run, which
+              # is indistinguishable from a clean run and must not be reported as
+              # one.
+              fh.write(f"sensor={'ok' if events.exists() else 'missing'}\n")
+
+          print("## Runtime security")
+          print()
+          print(f"Watching: {', '.join(sorted(guarded))}")
+          print()
+          if not events.exists():
+              print("> Falco produced no event file. Treated as a finding: the "
+                    "sensor cannot be assumed to have been running.")
+              print()
+          print("| Container | Rule | Events |")
+          print("|---|---|---|")
+          if hits:
+              for (name, rule), count in hits.most_common():
+                  print(f"| `{name}` | {rule} | {count} |")
+          else:
+              print("| — | no findings | 0 |")
+          PY
+          if [ -f "$FALCO_EVENTS" ]; then
+            echo "--- raw events for guarded containers ---"
+            grep -F -f <(printf '%s\n' "${GUARDED//,/$'\n'}") "$FALCO_EVENTS" || true
+          fi
+
+      - name: Upload runtime artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-security-reports
+          path: |
+            /tmp/falco_events.json
+            /tmp/falco-container.log
+          if-no-files-found: warn
+
+      - name: Enforce runtime gates
+        if: always()
+        # One place decides whether the job fails, for the same reason the
+        # static workflow has one: a gate hidden inside a scanner step is a gate
+        # nobody can find when it needs loosening.
+        env:
+          ENFORCE: ${{ inputs.enforce }}
+          HITS: ${{ steps.falco_findings.outputs.hits }}
+          SENSOR: ${{ steps.falco_findings.outputs.sensor }}
+          TRAFFIC: ${{ steps.traffic.outcome }}
+        run: |
+          set -uo pipefail
+          FAILED=""
+          add() { FAILED="${FAILED}"$'\n'"  - $1: $2"; }
+
+          if [ "${SENSOR:-missing}" != "ok" ]; then
+            add "Falco" "No event file was produced, so the sensor cannot be shown to have run. A silent sensor looks exactly like a clean run."
+          fi
+          if [ "${HITS:-0}" != "0" ]; then
+            add "Falco" "A guarded container reached the network or read a sensitive path (${HITS} event(s)). See the job summary and the runtime-security-reports artifact."
+          fi
+          if [ "$TRAFFIC" = "failure" ]; then
+            add "Traffic driver" "The security test suite failed. See the 'Drive traffic' step."
+          fi
+
+          if [ -z "$FAILED" ]; then
+            echo "All runtime security gates passed."
+            exit 0
+          fi
+          if [ "$ENFORCE" = "true" ]; then
+            echo "Runtime security gates failed:${FAILED}"
+            exit 1
+          fi
+          echo "::warning::Runtime security findings (not enforced yet):${FAILED}"
