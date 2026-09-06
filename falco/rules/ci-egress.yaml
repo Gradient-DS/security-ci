@@ -16,8 +16,10 @@
 - list: ci_guarded_containers
   items: [api-ci]
 
+# 127.0.0.0/8, not 127.0.0.1/32: Docker's embedded DNS resolver lives on
+# 127.0.0.11, and every name lookup inside a compose network goes to it.
 - list: ci_allowed_networks
-  items: ['127.0.0.1/32', '172.16.0.0/12']
+  items: ['127.0.0.0/8', '::1/128', '172.16.0.0/12']
 
 # Defined here rather than reusing the default rules' `open_read`.  This file
 # is loaded into `rules.d/` next to whatever ruleset the Falco image ships, and
@@ -28,20 +30,34 @@
     evt.type in (open, openat, openat2) and evt.is_open_read = true and
     fd.typechar = 'f' and fd.num >= 0
 
-- rule: Unexpected egress from a guarded CI container
-  desc: >
-    A container under test opened a connection outside the CI Docker networks.
-    Every external dependency in CI is stubbed, so such a connection means
-    request-influenced data reached a sink that fetches.  This is the control
-    that survives a dependency swap: it watches the syscall, not the library.
+# A connect that the sealed network refused never gets an fd, so every `fd.*`
+# field is <NA> -- which is precisely the case this gate exists to catch. A rule
+# written only against `fd.snet` therefore reports successful connections and
+# silently ignores blocked ones, meaning layers 1 and 2 cancel each other out.
+# Verified: `res=ENETUNREACH addr=1.1.1.1:80 sip=<NA>`.
+- macro: ci_egress_blocked
   condition: >
     evt.type = connect and
-    container.name in (ci_guarded_containers) and
-    fd.l4proto in (tcp, udp) and
+    evt.res in (ENETUNREACH, EHOSTUNREACH, ENETDOWN, ENONET)
+
+- macro: ci_egress_allowed_out
+  condition: >
+    evt.type = connect and fd.l4proto in (tcp, udp) and
     not fd.snet in (ci_allowed_networks)
+
+- rule: Unexpected egress from a guarded CI container
+  desc: >
+    A container under test reached for a connection outside the CI Docker
+    networks -- whether the sealed network refused it or not. Every external
+    dependency in CI is stubbed, so the attempt itself means request-influenced
+    data reached a sink that fetches. This is the control that survives a
+    dependency swap: it watches the syscall, not the library.
+  condition: >
+    container.name in (ci_guarded_containers) and
+    (ci_egress_blocked or ci_egress_allowed_out)
   output: >
-    Unexpected egress (container=%container.name dest=%fd.sip:%fd.sport
-    proc=%proc.name cmdline=%proc.cmdline)
+    Unexpected egress (container=%container.name target=%evt.arg.addr
+    result=%evt.res proc=%proc.name cmdline=%proc.cmdline)
   priority: CRITICAL
   tags: [ci, egress]
 
