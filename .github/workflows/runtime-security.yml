@@ -137,8 +137,15 @@ jobs:
             echo "::error::Falco is not running after start"
             exit 1
           fi
-          echo "--- falco startup log ---"
-          docker logs falco 2>&1 | tail -40
+          # Streamed to a file, because the container runs with `--rm`: once
+          # Falco exits, `docker logs` has nothing left to tell us and the
+          # reason it died goes with it. The action's own readiness loop only
+          # waits for `docker ps`, which is true well before rule loading
+          # finishes, so its log dump is always cut short.
+          nohup docker logs -f falco > /tmp/falco-container.log 2>&1 &
+          sleep 10
+          echo "--- falco log after 10s ---"
+          cat /tmp/falco-container.log
 
       - name: Bring up the egress-denied stack
         run: docker compose -f "${{ inputs.compose-file }}" up -d --build
@@ -178,16 +185,18 @@ jobs:
 
       - name: Confirm the sensor survived the run
         if: always()
-        # Falco runs with `--rm`, so if it exited its logs are already gone.
-        # Saying so explicitly beats a silent empty event file.
+        # A sensor that died mid-run reports nothing, which looks exactly like a
+        # clean run. The captured log is the only place its reason survives,
+        # since the container runs with `--rm`.
         run: |
           if docker ps --format '{{.Names}}' | grep -qx falco; then
             echo "sensor still running"
-            docker logs falco 2>&1 | tail -30
           else
-            echo "::warning::Falco exited during the run; --rm took its logs with it"
+            echo "::error::Falco exited during the run"
             ls -l /tmp/falco_events.json 2>&1 || echo "no event file"
           fi
+          echo "--- captured sensor log ---"
+          cat /tmp/falco-container.log 2>/dev/null || echo "(no captured log)"
 
       - name: Stop Falco
         uses: falcosecurity/falco-actions/stop@558a3ceeee9403e1c875ffbeb704c34c93e24752
@@ -264,6 +273,7 @@ jobs:
           name: runtime-security-reports
           path: |
             /tmp/falco_events.json
+            /tmp/falco-container.log
           if-no-files-found: warn
 
       - name: Enforce runtime gates
