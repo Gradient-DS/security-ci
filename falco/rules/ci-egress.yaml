@@ -1,0 +1,68 @@
+# Falco rules for the CI runtime gate (layer 2).
+#
+# These CIDRs are Docker's default bridge pools, not production ranges -- this
+# repo is public and must not describe our networks.  Keep it that way.
+#
+# Layer 2 exists because layers 1 and 3 each have a blind spot this one covers:
+# the pytest guard patches Python, so a subprocess or C extension walks past it,
+# and the egress-denied network makes a connection fail without telling anyone
+# it was attempted.  Falco watches the syscall, so it sees the attempt whether
+# or not it succeeded, and whichever language made it.
+
+- required_engine_version: 0.31.0
+
+- list: ci_guarded_containers
+  items: [api-ci]
+
+- list: ci_allowed_networks
+  items: ['127.0.0.1/32', '172.16.0.0/12']
+
+# Defined here rather than reusing the default rules' `open_read`.  This file
+# is loaded into `rules.d/` next to whatever ruleset the Falco image ships, and
+# a security gate that silently changes meaning when an upstream macro is
+# retuned is not a gate.  Same definition, pinned to us.
+- macro: ci_open_read
+  condition: >
+    evt.type in (open, openat, openat2) and evt.is_open_read = true and
+    fd.typechar = 'f' and fd.num >= 0
+
+- rule: Unexpected egress from a guarded CI container
+  desc: >
+    A container under test opened a connection outside the CI Docker networks.
+    Every external dependency in CI is stubbed, so such a connection means
+    request-influenced data reached a sink that fetches.  This is the control
+    that survives a dependency swap: it watches the syscall, not the library.
+  condition: >
+    evt.type = connect and evt.dir = < and
+    container.name in (ci_guarded_containers) and
+    fd.l4proto in (tcp, udp) and
+    not fd.snet in (ci_allowed_networks)
+  output: >
+    Unexpected egress (container=%container.name dest=%fd.sip:%fd.sport
+    proc=%proc.name cmdline=%proc.cmdline)
+  priority: CRITICAL
+  tags: [ci, egress]
+
+# NOTE: Falco stops at the first rule that matches an event, and the image's
+# own falco_rules.yaml always loads before rules.d/.  For any path that is also
+# in upstream's `sensitive_files` -- /etc/shadow among them -- upstream's "Read
+# sensitive file untrusted" matches first and this rule never sees the event.
+# Verified locally: disabling that rule makes this one fire on the same read.
+#
+# That is why enforcement counts Falco events *by guarded container* rather than
+# by grepping for this rule's output text.  Scoping to the container catches the
+# finding whichever rule reports it, and this rule still earns its place for the
+# paths upstream's list does not carry.
+- rule: Guarded CI container read a sensitive file
+  desc: A container under test opened a path that only an LFI would want.
+  condition: >
+    ci_open_read and container.name in (ci_guarded_containers) and
+    (fd.name startswith /etc/shadow or
+     fd.name startswith /proc/self/environ or
+     fd.name startswith /run/secrets or
+     fd.name startswith /root/.ssh)
+  output: >
+    Sensitive file read (container=%container.name file=%fd.name
+    proc=%proc.name cmdline=%proc.cmdline)
+  priority: CRITICAL
+  tags: [ci, lfi]
