@@ -105,7 +105,10 @@ jobs:
           mode: live
           falco-version: ${{ inputs.falco-version }}
           # Singular `rule`, not `rules` -- the action's own input name.
-          custom-rule-file: .falco/ci-egress.yaml
+          # Absolute, because the action hands this straight to `docker -v`,
+          # which reads a relative path as a *named volume* and fails with
+          # "includes invalid characters for a local volume name".
+          custom-rule-file: ${{ github.workspace }}/.falco/ci-egress.yaml
           verbose: true
 
       - name: Bring up the egress-denied stack
