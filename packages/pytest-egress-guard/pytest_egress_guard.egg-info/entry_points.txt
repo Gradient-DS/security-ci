@@ -1,2 +1,0 @@
-[pytest11]
-egress_guard = pytest_egress_guard.plugin

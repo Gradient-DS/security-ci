@@ -1,2 +1,10 @@
 actionlint
 __pycache__/
+
+# Build artefacts from the editable install of packages/*. These were
+# committed by accident and reach consumers: pip installs the package from a
+# tarball of this tree, and setuptools will reuse a stale build/lib if it finds
+# one.
+__pycache__/
+*.egg-info/
+build/
