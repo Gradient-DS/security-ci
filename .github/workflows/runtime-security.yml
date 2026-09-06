@@ -143,6 +143,12 @@ jobs:
           # waits for `docker ps`, which is true well before rule loading
           # finishes, so its log dump is always cut short.
           nohup docker logs -f falco > /tmp/falco-container.log 2>&1 &
+          # Records the die event with its exit code. `--rm` removes the
+          # container before anything can inspect it, so this is the only way to
+          # learn whether it exited cleanly, crashed, or was killed.
+          nohup docker events --filter 'container=falco' --filter 'event=die' \
+            --format '{{.Time}} {{.Status}} exitCode={{index .Actor.Attributes "exitCode"}}' \
+            > /tmp/falco-events-docker.log 2>&1 &
           sleep 10
           echo "--- falco log after 10s ---"
           cat /tmp/falco-container.log
@@ -197,6 +203,10 @@ jobs:
           fi
           echo "--- captured sensor log ---"
           cat /tmp/falco-container.log 2>/dev/null || echo "(no captured log)"
+          echo "--- docker die events ---"
+          cat /tmp/falco-events-docker.log 2>/dev/null || echo "(none)"
+          echo "--- kernel messages ---"
+          sudo dmesg 2>/dev/null | grep -iE "falco|oom|killed process|segfault|bpf" | tail -20 || echo "(none)"
 
       - name: Stop Falco
         uses: falcosecurity/falco-actions/stop@558a3ceeee9403e1c875ffbeb704c34c93e24752
@@ -274,6 +284,7 @@ jobs:
           path: |
             /tmp/falco_events.json
             /tmp/falco-container.log
+            /tmp/falco-events-docker.log
           if-no-files-found: warn
 
       - name: Enforce runtime gates
