@@ -1,6 +1,6 @@
 [project]
 name = "pytest-egress-guard"
-version = "1.0.0"
+version = "1.1.0"
 description = "Fail a test when guarded code reaches the network or a sensitive path"
 # 3.11, not the tooling repo's 3.12: the consumers are Flask APIs on
 # python:3.11-slim, and a plugin they cannot install guards nothing.

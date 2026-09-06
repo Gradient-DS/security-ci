@@ -7,6 +7,13 @@ hook can reach it -- which is why guarding the *library* was never going to be
 enough.  Patching the socket layer and ``open`` catches it anyway, because
 every pure-Python fetch bottoms out in one of the two.
 
+Raising is not enough on its own.  WeasyPrint catches every exception around
+image loading and renders the document anyway, so a guard that only raises
+reports a *pass* on the tree that carried the incident -- and the export routes
+caught ``Exception`` too, which would have buried it a second time.  Every
+attempt is therefore recorded, and the fixture fails the test at teardown when
+anything was recorded, whether or not the exception survived the journey.
+
 This is the fast layer.  It cannot see subprocesses or C extensions; the Falco
 layer covers those.
 """
@@ -17,6 +24,7 @@ import builtins
 import io
 import os
 import socket
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -91,8 +99,48 @@ def _is_sensitive(path: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class Attempt:
+    """One thing guarded code tried to reach."""
+
+    kind: str  # "connect", "dns" or "open"
+    target: str
+
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.target}"
+
+
+class EgressLog:
+    """What the guards saw, so a swallowed exception is still a failure.
+
+    Call :meth:`expect_attempts` in a test whose *purpose* is to prove the
+    guard fires; every other test wants the teardown check.
+    """
+
+    def __init__(self) -> None:
+        self.attempts: list[Attempt] = []
+        self._expected = False
+
+    def expect_attempts(self) -> None:
+        self._expected = True
+
+    @property
+    def expected(self) -> bool:
+        return self._expected
+
+    def record(self, kind: str, target: str) -> Attempt:
+        attempt = Attempt(kind, target)
+        self.attempts.append(attempt)
+        return attempt
+
+
+#: Where the fixture leaves its log for the report hook to find.
+_EGRESS_LOG = pytest.StashKey[EgressLog]()
+
+
 @pytest.fixture
-def deny_egress(monkeypatch):
+def deny_egress(monkeypatch, request):
+    log = EgressLog()
     real_connect = socket.socket.connect
     real_getaddrinfo = socket.getaddrinfo
     real_open = builtins.open
@@ -100,11 +148,13 @@ def deny_egress(monkeypatch):
     def guarded_connect(self, address, *args, **kwargs):
         host = address[0] if isinstance(address, tuple) else str(address)
         if host not in DEFAULT_ALLOWED_HOSTS:
+            log.record("connect", host)
             raise EgressDenied(f"blocked outbound connection to {host}")
         return real_connect(self, address, *args, **kwargs)
 
     def guarded_getaddrinfo(host, *args, **kwargs):
         if host not in DEFAULT_ALLOWED_HOSTS:
+            log.record("dns", str(host))
             raise EgressDenied(f"blocked DNS resolution of {host}")
         return real_getaddrinfo(host, *args, **kwargs)
 
@@ -117,6 +167,7 @@ def deny_egress(monkeypatch):
             path = path.decode("utf-8", errors="replace")
         blocked = _is_sensitive(path)
         if blocked is not None:
+            log.record("open", blocked)
             raise EgressDenied(f"blocked read of sensitive path {blocked}")
         return real_open(file, *args, **kwargs)
 
@@ -127,4 +178,34 @@ def deny_egress(monkeypatch):
     # `pathlib` reaches for the `io` one.  Patching only builtins leaves every
     # `Path.read_text()` unguarded.
     monkeypatch.setattr(io, "open", guarded_open)
-    return None
+
+    request.node.stash[_EGRESS_LOG] = log
+    yield log
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Turn "passed, but it reached for the network" into a failure.
+
+    Failing from the fixture's teardown instead would report an *error* against
+    a test that still shows as passed -- which is precisely the misleading
+    signal this plugin exists to remove.  Rewriting the call report puts the
+    failure on the test that did the reaching.
+    """
+    outcome = yield
+    report = outcome.get_result()
+
+    if report.when != "call" or not report.passed:
+        return
+
+    log = item.stash.get(_EGRESS_LOG, None)
+    if log is None or log.expected or not log.attempts:
+        return
+
+    blocked = "\n  ".join(str(attempt) for attempt in log.attempts)
+    report.outcome = "failed"
+    report.longrepr = (
+        "EgressDenied was raised but never reached the test -- something in "
+        "between caught it, which is exactly how the incident stayed "
+        f"invisible. Guarded code attempted:\n  {blocked}"
+    )
