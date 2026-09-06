@@ -65,6 +65,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # falco-actions/stop reads this run's jobs from the API to timestamp
+      # findings against steps. An explicit permissions block sets every scope
+      # it does not name to none, so without this the action's `jq` fails on an
+      # error body: "Cannot iterate over null".
+      actions: read
     steps:
       - uses: actions/checkout@v6
 
@@ -111,6 +116,18 @@ jobs:
           custom-rule-file: ${{ github.workspace }}/.falco/ci-egress.yaml
           verbose: true
 
+      - name: Confirm the sensor is running
+        # The action waits for the container and then exits; it does not check
+        # that Falco stayed up. Everything after this is only as trustworthy as
+        # the sensor, so failures belong here rather than at the end.
+        run: |
+          if ! docker ps --format '{{.Names}}' | grep -qx falco; then
+            echo "::error::Falco is not running after start"
+            exit 1
+          fi
+          echo "--- falco startup log ---"
+          docker logs falco 2>&1 | tail -40
+
       - name: Bring up the egress-denied stack
         run: docker compose -f "${{ inputs.compose-file }}" up -d --build
 
@@ -146,6 +163,19 @@ jobs:
         id: traffic
         run: ${{ inputs.test-command }}
         continue-on-error: true
+
+      - name: Confirm the sensor survived the run
+        if: always()
+        # Falco runs with `--rm`, so if it exited its logs are already gone.
+        # Saying so explicitly beats a silent empty event file.
+        run: |
+          if docker ps --format '{{.Names}}' | grep -qx falco; then
+            echo "sensor still running"
+            docker logs falco 2>&1 | tail -30
+          else
+            echo "::warning::Falco exited during the run; --rm took its logs with it"
+            ls -l /tmp/falco_events.json 2>&1 || echo "no event file"
+          fi
 
       - name: Stop Falco
         uses: falcosecurity/falco-actions/stop@558a3ceeee9403e1c875ffbeb704c34c93e24752
