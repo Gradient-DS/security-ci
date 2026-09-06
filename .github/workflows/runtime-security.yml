@@ -114,6 +114,18 @@ jobs:
           # which reads a relative path as a *named volume* and fails with
           # "includes invalid characters for a local volume name".
           custom-rule-file: ${{ github.workspace }}/.falco/ci-egress.yaml
+          # Off because the action's own default is broken at this commit: it
+          # mounts `${{ github.action_path }}/rules/falco_cicd_rules.yaml`, but
+          # that file lives at the repository root, not under `start/`. Docker
+          # turns the missing path into an empty directory and Falco exits with
+          # "basic_filebuf::underflow error reading the file: Is a directory" --
+          # which is why the sensor kept dying mid-run. Reproduced directly
+          # against the 0.39.2 image.
+          #
+          # Losing them costs little here: they target CI supply-chain
+          # behaviour, while this gate is aimed at the application container,
+          # and fewer loaded rules means less first-match shadowing of ours.
+          cicd-rules: false
           verbose: true
 
       - name: Confirm the sensor is running
