@@ -21,6 +21,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "hostile-corpus" },
     { name = "pytest" },
     { name = "pytest-egress-guard" },
 ]
@@ -30,9 +31,15 @@ requires-dist = [{ name = "pyyaml", specifier = ">=6.0.2" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "hostile-corpus", editable = "packages/hostile-corpus" },
     { name = "pytest", specifier = ">=8.3.0" },
     { name = "pytest-egress-guard", editable = "packages/pytest-egress-guard" },
 ]
+
+[[package]]
+name = "hostile-corpus"
+version = "1.0.0"
+source = { editable = "packages/hostile-corpus" }
 
 [[package]]
 name = "iniconfig"
