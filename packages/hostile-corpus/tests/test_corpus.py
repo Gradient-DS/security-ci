@@ -64,3 +64,83 @@ def test_file_url_probe_is_confined_to_the_fragment():
             assert parsed.path in ("/etc/passwd", "/proc/self/environ")
             assert REFLECTION_PROBE not in parsed.path
             assert REFLECTION_PROBE in parsed.fragment
+
+
+# --- Shapes, as opposed to payloads -------------------------------------
+#
+# Everything above this line tests `fetch_payloads`, whose members are hostile
+# *content*. The three names below are hostile *shapes*: a value that is not
+# wrong in itself but is framed so that two layers disagree about it, and a
+# body that is not the type the receiving code assumed. Both classes are
+# invisible to a content corpus, and both were found by a human reading a
+# handler rather than by the 63 payloads driven over it 63 times.
+
+
+def test_whitespace_variants_preserve_the_value():
+    from hostile_corpus import whitespace_variants
+
+    for variant in whitespace_variants("abc"):
+        assert "abc" in variant
+        assert variant != "abc"
+
+
+def test_whitespace_variants_include_a_trailing_newline():
+    """The specific shape a `$`-anchored Python regex accepts and a database
+    input parser then refuses."""
+    from hostile_corpus import whitespace_variants
+
+    assert "abc\n" in whitespace_variants("abc")
+
+
+def test_whitespace_variants_are_unique():
+    from hostile_corpus import whitespace_variants
+
+    variants = whitespace_variants("abc")
+    assert len(variants) == len(set(variants))
+
+
+def test_a_dollar_anchored_regex_accepts_a_trailing_newline_variant():
+    """The property the class exists for, asserted rather than described.
+
+    `re.match(r"^[0-9a-f-]+$", value)` is the guard idiom this shape defeats:
+    Python's `$` matches before a final newline, so the guard passes and
+    whatever parses the value next -- Postgres's `uuid_in`, an integer cast, a
+    path check -- sees a string it refuses.
+    """
+    import re
+
+    from hostile_corpus import whitespace_variants
+
+    guard = re.compile(r"^[0-9a-f-]+$")
+    accepted = [v for v in whitespace_variants("0-9-a-f") if guard.match(v)]
+    assert accepted, "no variant survives a `$`-anchored guard, so the class is untested"
+
+
+def test_non_object_bodies_are_not_objects():
+    """Every entry must be something `body.get(...)` cannot be called on, or
+    the shape is not being tested."""
+    from hostile_corpus import NON_OBJECT_BODIES
+
+    assert NON_OBJECT_BODIES
+    for body in NON_OBJECT_BODIES:
+        assert not isinstance(body, dict)
+
+
+def test_non_object_bodies_include_a_top_level_array():
+    """The one that reached a live 500 in AIRE: a truthy non-dict, so
+    `request.get_json(silent=True) or {}` keeps it and the next `.get()`
+    raises AttributeError."""
+    from hostile_corpus import NON_OBJECT_BODIES
+
+    arrays = [b for b in NON_OBJECT_BODIES if isinstance(b, list)]
+    assert arrays
+    assert any(b for b in arrays), "an empty list is falsy; `or {}` would rescue it"
+
+
+def test_non_object_bodies_are_json_serialisable():
+    import json
+
+    from hostile_corpus import NON_OBJECT_BODIES
+
+    for body in NON_OBJECT_BODIES:
+        json.loads(json.dumps(body))
