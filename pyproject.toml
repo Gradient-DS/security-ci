@@ -9,11 +9,15 @@ dependencies = ["PyYAML>=6.0.2"]
 # pytest-egress-guard ships from this repo; installing it here is what puts
 # its `deny_egress` fixture on the pytest11 entry point, so CI exercises the
 # same delivery path a consuming repo uses rather than a local import.
-dev = ["pytest>=8.3.0", "pytest-egress-guard"]
+# hostile-corpus ships from here too, for the same reason: without it in this
+# group and in testpaths below, the root `uv run pytest -v` that CI runs never
+# imports or collects it, so a PR that guts the corpus merges clean.
+dev = ["pytest>=8.3.0", "pytest-egress-guard", "hostile-corpus"]
 
 [tool.uv.sources]
 pytest-egress-guard = { path = "packages/pytest-egress-guard", editable = true }
+hostile-corpus = { path = "packages/hostile-corpus", editable = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/pytest-egress-guard/tests"]
+testpaths = ["tests", "packages/pytest-egress-guard/tests", "packages/hostile-corpus/tests"]
 pythonpath = ["."]
