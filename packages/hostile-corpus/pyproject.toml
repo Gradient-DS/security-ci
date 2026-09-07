@@ -1,0 +1,18 @@
+[project]
+name = "hostile-corpus"
+version = "1.0.0"
+description = "Shared payloads that make a fetching sink fetch, for exercising egress sensors"
+# 3.11, not the tooling repo's 3.12: consumers are Flask APIs on
+# python:3.11-slim, and a corpus they cannot install exercises nothing.
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hostile_corpus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
