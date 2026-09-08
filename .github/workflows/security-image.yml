@@ -112,3 +112,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           trivyignores: '${{ steps.trivyignore.outputs.file }}'
+          # trivy's default 5m analysis deadline is too short for the
+          # torch/triton-sized images (reranker, web-fetch, agents-api):
+          # three "context deadline exceeded" gate failures 2026-09-07/08.
+          timeout: '20m'
