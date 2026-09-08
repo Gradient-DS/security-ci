@@ -1,0 +1,268 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "owui-openapi request surface fixture",
+    "version": "1",
+    "description": "Trimmed from the Phase 0 owui-openapi.json reference. Selected request bodies and parameters are unchanged; response and unrelated metadata are omitted."
+  },
+  "paths": {
+    "/api/v1/models/create": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelForm"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/v1/knowledge/{id}/files/batch/add": {
+      "post": {
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/KnowledgeFileIdForm"
+                },
+                "title": "Form Data"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/{id}/compact": {
+      "post": {
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CompactChatForm"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Form Data"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/search": {
+      "get": {
+        "parameters": [
+          {
+            "name": "text",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Text"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ModelForm": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "base_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Model Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ModelMeta"
+          },
+          "params": {
+            "$ref": "#/components/schemas/ModelParams"
+          },
+          "access_grants": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Access Grants"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "meta",
+          "params"
+        ],
+        "title": "ModelForm"
+      },
+      "ModelMeta": {
+        "properties": {
+          "profile_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Image Url"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "User-facing description of the model."
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ModelMeta",
+        "description": "Metadata for a workspace model entry (profile, description, tags, capabilities)."
+      },
+      "ModelParams": {
+        "properties": {},
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ModelParams",
+        "description": "Parameters for model inference (temperature, top_p, etc.)."
+      },
+      "KnowledgeFileIdForm": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "title": "File Id"
+          },
+          "directory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directory Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "KnowledgeFileIdForm"
+      },
+      "CompactChatForm": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "title": "CompactChatForm"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+[project]
+name = "openapi-surface"
+version = "0.1.0"
+description = "Framework-agnostic derivation of writable strings and query parameters from OpenAPI"
+# 3.11, not the tooling repo's 3.12: consumers include Flask APIs on
+# python:3.11-slim as well as FastAPI apps.
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["openapi_surface*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
