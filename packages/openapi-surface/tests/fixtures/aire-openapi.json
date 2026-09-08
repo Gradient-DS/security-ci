@@ -1,0 +1,287 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "aire-openapi request surface fixture",
+    "version": "1",
+    "description": "Trimmed from the Phase 0 aire-openapi.json reference. Selected request bodies and parameters are unchanged; response and unrelated metadata are omitted."
+  },
+  "paths": {
+    "/conversations": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConversationBody.5888543"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/save-search-results": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveSearchResultsBody.6721b6a"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/filesystem/bulk/copy": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkCopyBody.1f0bef1"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/user-documents/{document_id}/favorite": {
+      "patch": {
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDocumentFavoriteBody.6721b6a"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateConversationBody.5888543": {
+        "additionalProperties": true,
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Date"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "document_ids": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Ids"
+          },
+          "is_public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Is Public"
+          },
+          "main_question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Main Question"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type"
+          }
+        },
+        "title": "CreateConversationBody",
+        "type": "object"
+      },
+      "SaveSearchResultsBody.6721b6a": {
+        "additionalProperties": true,
+        "properties": {
+          "results": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SaveSearchResultsBody.6721b6a.SearchResultItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Results"
+          }
+        },
+        "title": "SaveSearchResultsBody",
+        "type": "object"
+      },
+      "SaveSearchResultsBody.6721b6a.SearchResultItem": {
+        "additionalProperties": true,
+        "description": "One entry of ``POST /save-search-results``'s ``results`` array.\n\nOnly the three fields ``_validated_doc_payload`` treats as strings are\ndeclared; every other key the frontend sends rides through on\n``RequestModel``'s ``extra=\"allow\"``. See this module's docstring for why\nthe element type has to be a model with named string properties rather\nthan ``dict[str, Any]``.",
+        "properties": {
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Type"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "title": "SearchResultItem",
+        "type": "object"
+      },
+      "BulkCopyBody.1f0bef1": {
+        "additionalProperties": true,
+        "properties": {
+          "nodeIds": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Nodeids"
+          },
+          "targetParentId": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Targetparentid"
+          }
+        },
+        "title": "BulkCopyBody",
+        "type": "object"
+      },
+      "SetDocumentFavoriteBody.6721b6a": {
+        "additionalProperties": true,
+        "properties": {
+          "isFavorite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Isfavorite"
+          }
+        },
+        "title": "SetDocumentFavoriteBody",
+        "type": "object"
+      }
+    }
+  }
+}
