@@ -12,12 +12,21 @@ dependencies = ["PyYAML>=6.0.2"]
 # hostile-corpus ships from here too, for the same reason: without it in this
 # group and in testpaths below, the root `uv run pytest -v` that CI runs never
 # imports or collects it, so a PR that guts the corpus merges clean.
-dev = ["pytest>=8.3.0", "pytest-egress-guard", "hostile-corpus"]
+# openapi-surface was extracted in #16 without being added here, so its tests
+# have never run in this repo's CI -- the exact failure the previous sentence
+# describes, already happened once.
+dev = ["pytest>=8.3.0", "pytest-egress-guard", "hostile-corpus", "openapi-surface"]
 
 [tool.uv.sources]
 pytest-egress-guard = { path = "packages/pytest-egress-guard", editable = true }
 hostile-corpus = { path = "packages/hostile-corpus", editable = true }
+openapi-surface = { path = "packages/openapi-surface", editable = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/pytest-egress-guard/tests", "packages/hostile-corpus/tests"]
+testpaths = [
+    "tests",
+    "packages/pytest-egress-guard/tests",
+    "packages/hostile-corpus/tests",
+    "packages/openapi-surface/tests",
+]
 pythonpath = ["."]
