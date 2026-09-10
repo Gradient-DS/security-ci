@@ -1,6 +1,6 @@
 [project]
 name = "openapi-surface"
-version = "0.1.0"
+version = "0.2.0"
 description = "Framework-agnostic derivation of writable strings and query parameters from OpenAPI"
 # 3.11, not the tooling repo's 3.12: consumers include Flask APIs on
 # python:3.11-slim as well as FastAPI apps.
