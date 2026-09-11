@@ -65,6 +65,11 @@ gh auth setup-git          # once per workstation
       - run: git config --global url."https://x-access-token:${{ steps.tooling-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 ```
 
+`runtime-security.yml` also exports that token as `GH_TOKEN` for the caller's
+`docker compose up --build`, so a stack that bakes this tooling into its test
+image can install it: the guarded containers have no route off-host, which makes
+the image build the last moment a network exists.
+
 The App is `gradient-ds-security-ci-reader`: contents read-only, on this
 repository only. Its id and private key are organisation secrets
 (`SECURITY_CI_APP_ID`, `SECURITY_CI_APP_PRIVATE_KEY`), readable by every
