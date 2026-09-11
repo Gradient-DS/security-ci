@@ -31,7 +31,20 @@ else.
 ## Consuming it
 
 A caller pins a commit and passes `secrets: inherit`, which hands the workflow
-the org App credentials it needs to check this private repository out:
+the org App credentials it needs to check this private repository out. The
+workflows declare those secrets under the organisation secrets' own names,
+because `secrets: inherit` matches by name: an input named anything else stays
+empty, the checkout falls back to the caller's own token, and that token cannot
+read this repository. A caller that passes secrets explicitly (because it also
+passes `git-token` or `build-secrets`) must name them the same way:
+
+```yaml
+    secrets:
+      SECURITY_CI_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+      SECURITY_CI_APP_PRIVATE_KEY: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+      git-token: ${{ secrets.SOME_READ_TOKEN }}
+```
+
 
 ```yaml
   security:

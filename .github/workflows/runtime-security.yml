@@ -52,17 +52,19 @@ on:
         required: false
         default: false
     secrets:
-      tooling-app-id:
+      SECURITY_CI_APP_ID:
         description: >-
           App ID of the org GitHub App with contents:read on
           Gradient-DS/security-ci, which is where this workflow and the helper
           scripts it checks out live. Optional, so a caller can still run
           against a public checkout of the tooling; without it a private
           tooling repo cannot be read and the job fails at that checkout.
-          Callers pass `secrets: inherit`.
+          Named exactly as the organisation secrets are, because `secrets: inherit`
+          matches by name: a differently named input stays empty and the checkout
+          then falls back to the caller's own token, which cannot read this repo.
         required: false
-      tooling-app-private-key:
-        description: 'Private key of the same App. Paired with tooling-app-id.'
+      SECURITY_CI_APP_PRIVATE_KEY:
+        description: 'Private key of the same App. Paired with SECURITY_CI_APP_ID.'
         required: false
 
 env:
@@ -76,7 +78,7 @@ jobs:
     permissions:
       contents: read
     env:
-      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
+      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
       - uses: actions/checkout@v6
 
@@ -85,8 +87,8 @@ jobs:
         if: env.TOOLING_APP_ID != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.tooling-app-id }}
-          private-key: ${{ secrets.tooling-app-private-key }}
+          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
+          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
           owner: Gradient-DS
           repositories: security-ci
 
