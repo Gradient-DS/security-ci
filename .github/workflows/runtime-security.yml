@@ -119,6 +119,15 @@ jobs:
           cat .falco/ci-egress.yaml
 
       - name: Bring up the egress-denied stack
+        # GH_TOKEN is the same read-only App token this job checked the tooling
+        # out with. A caller whose stack bakes test tooling from the private
+        # security-ci at image-build time (open-webui and AIRE both do; their
+        # containers have no route off-host, so the build is the last moment a
+        # network exists) reads it through a BuildKit secret in its own compose
+        # file. Empty for a caller that passes no App secrets, which is what a
+        # public dependency needs anyway.
+        env:
+          GH_TOKEN: ${{ steps.tooling-token.outputs.token }}
         run: docker compose -f "${{ inputs.compose-file }}" up -d --build
 
       - name: Wait for health
