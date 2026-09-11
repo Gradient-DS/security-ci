@@ -194,6 +194,25 @@ jobs:
         run: ${{ inputs.test-command }}
         continue-on-error: true
 
+      - name: Keep the application logs
+        # The traffic driver reports status codes; the tracebacks behind a 5xx
+        # exist only in the application's own log, which disappears with the
+        # runner. Without it every CI finding has to be reproduced locally before
+        # it can be triaged.
+        if: always()
+        env:
+          GUARDED: ${{ inputs.guarded-containers }}
+        run: |
+          mkdir -p /tmp/app-logs
+          IFS=',' read -r -a names <<< "$GUARDED"
+          for name in "${names[@]}"; do
+            name="${name// /}"
+            [ -n "$name" ] || continue
+            docker logs --timestamps "$name" > "/tmp/app-logs/$name.log" 2>&1 || true
+          done
+          docker compose -f "${{ inputs.compose-file }}" logs --no-color --timestamps > /tmp/app-logs/compose.log 2>&1 || true
+          ls -la /tmp/app-logs
+
       - name: Stop the sensor and keep its evidence
         if: always()
         run: |
@@ -282,6 +301,7 @@ jobs:
           path: |
             /tmp/falco_events.json
             /tmp/falco-container.log
+            /tmp/app-logs/
           if-no-files-found: warn
 
       - name: Enforce runtime gates
