@@ -18,6 +18,29 @@ jobs:
     permissions:
       contents: read
     steps:
+      # "Integration not found" from the minting step means the id and the key do
+      # not resolve to an App: usually the App ID secret holds something else, or
+      # the key was pasted without its BEGIN/END lines. Neither value is exposed
+      # here -- only whether it has the expected shape.
+      - name: Check the App credentials look right
+        env:
+          APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+          APP_KEY: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+        run: |
+          set -uo pipefail
+          test -n "$APP_ID" && echo "app id: set" || echo "app id: EMPTY"
+          case "$APP_ID" in
+            '' ) ;;
+            *[!0-9]* ) echo "app id: not numeric -- a Client ID or a stray space, not the App ID" ;;
+            * ) [ "$APP_ID" = "4909168" ] && echo "app id: matches gradient-ds-security-ci-reader" \
+                  || echo "app id: numeric but not 4909168 -- a different App" ;;
+          esac
+          printf '%s' "$APP_KEY" | head -1 | grep -q 'BEGIN .*PRIVATE KEY' \
+            && echo "key: starts with a BEGIN line" || echo "key: NO BEGIN line"
+          printf '%s' "$APP_KEY" | tail -1 | grep -q 'END .*PRIVATE KEY' \
+            && echo "key: ends with an END line" || echo "key: NO END line (truncated paste?)"
+          echo "key lines: $(printf '%s' "$APP_KEY" | wc -l)"
+
       - id: tooling-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
