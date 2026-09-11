@@ -1,0 +1,43 @@
+name: Tooling token smoke test
+
+# Proves the org App can read this repository, and nothing else.
+#
+# When a consumer's security job fails at the tooling checkout, the cause is
+# either the App (not installed here, wrong permission, missing or rotated org
+# secret) or that consumer's own workflow (no `secrets: inherit`). Those two
+# look identical from the consumer's log -- a 404 on checkout -- so run this
+# first: green here means the App is fine and the consumer is at fault.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Mint a token and read this repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - id: tooling-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
+          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+          owner: Gradient-DS
+          repositories: security-ci
+
+      # Deliberately not the workflow's own GITHUB_TOKEN: that would pass even
+      # if the App were broken, which is the one thing this test exists to catch.
+      - uses: actions/checkout@v6
+        with:
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token }}
+          path: tooling-under-test
+
+      - name: Report what the token could read
+        run: |
+          set -euo pipefail
+          test -f tooling-under-test/scripts/runtime_gate.py
+          test -f tooling-under-test/falco/rules/ci-egress.yaml
+          test -d tooling-under-test/packages/hostile-corpus
+          echo "App token read security-ci: gate, rules and packages all present."

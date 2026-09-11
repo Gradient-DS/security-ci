@@ -29,7 +29,7 @@ on:
         default: '.github/security-exceptions.yml'
       tooling-ref:
         description: >-
-          Ref of Gradient-DS/.github to take the helper scripts from. Defaults to
+          Ref of Gradient-DS/security-ci to take the helper scripts from. Defaults to
           the release tag; override to test a paired workflow + helper change on a
           branch, or to keep the helper in step with a caller pinned at @main.
         type: string
@@ -44,6 +44,18 @@ on:
           it is audited. Handed to git through GIT_CONFIG_* environment
           variables only — no netrc, no file, nothing in the workspace.
         required: false
+      tooling-app-id:
+        description: >-
+          App ID of the org GitHub App with contents:read on
+          Gradient-DS/security-ci, which is where this workflow and the helper
+          scripts it checks out live. Optional, so a caller can still run
+          against a public checkout of the tooling; without it a private
+          tooling repo cannot be read and the job fails at that checkout.
+          Callers pass `secrets: inherit`.
+        required: false
+      tooling-app-private-key:
+        description: 'Private key of the same App. Paired with tooling-app-id.'
+        required: false
 
 env:
   TOOLING_PATH: .security-tooling
@@ -52,11 +64,24 @@ jobs:
   exceptions:
     name: Exception file valid and unexpired
     runs-on: ubuntu-latest
+    env:
+      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
     steps:
       - uses: actions/checkout@v6
+      - id: tooling-token
+        # secrets are not readable from a step `if`, so the job exposes the id as env.
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.tooling-app-id }}
+          private-key: ${{ secrets.tooling-app-private-key }}
+          owner: Gradient-DS
+          repositories: security-ci
+
       - uses: actions/checkout@v6
         with:
-          repository: Gradient-DS/.github
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ inputs.tooling-ref }}
           path: ${{ env.TOOLING_PATH }}
       - uses: actions/setup-python@v6
@@ -93,13 +118,26 @@ jobs:
     name: Python Dependencies (pip-audit)
     if: inputs.python-requirements != '' || inputs.python-uv
     runs-on: ubuntu-latest
+    env:
+      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
     steps:
       - uses: actions/checkout@v6
+
+      - id: tooling-token
+        # secrets are not readable from a step `if`, so the job exposes the id as env.
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.tooling-app-id }}
+          private-key: ${{ secrets.tooling-app-private-key }}
+          owner: Gradient-DS
+          repositories: security-ci
 
       - name: Check out shared tooling
         uses: actions/checkout@v6
         with:
-          repository: Gradient-DS/.github
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ inputs.tooling-ref }}
           path: ${{ env.TOOLING_PATH }}
 
@@ -172,11 +210,24 @@ jobs:
     name: Node Dependencies (npm audit)
     if: inputs.node-dirs != ''
     runs-on: ubuntu-latest
+    env:
+      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
     steps:
       - uses: actions/checkout@v6
+      - id: tooling-token
+        # secrets are not readable from a step `if`, so the job exposes the id as env.
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.tooling-app-id }}
+          private-key: ${{ secrets.tooling-app-private-key }}
+          owner: Gradient-DS
+          repositories: security-ci
+
       - uses: actions/checkout@v6
         with:
-          repository: Gradient-DS/.github
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ inputs.tooling-ref }}
           path: ${{ env.TOOLING_PATH }}
       - uses: actions/setup-node@v6
@@ -223,6 +274,8 @@ jobs:
   secrets:
     name: Secrets (gitleaks)
     runs-on: ubuntu-latest
+    env:
+      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -231,10 +284,21 @@ jobs:
           # has to restrict itself to HEAD explicitly.
           fetch-depth: 0
 
+      - id: tooling-token
+        # secrets are not readable from a step `if`, so the job exposes the id as env.
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.tooling-app-id }}
+          private-key: ${{ secrets.tooling-app-private-key }}
+          owner: Gradient-DS
+          repositories: security-ci
+
       - name: Check out shared tooling
         uses: actions/checkout@v6
         with:
-          repository: Gradient-DS/.github
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ inputs.tooling-ref }}
           path: ${{ env.TOOLING_PATH }}
 
@@ -324,11 +388,24 @@ jobs:
     name: IaC (trivy config)
     if: inputs.trivy-config-paths != ''
     runs-on: ubuntu-latest
+    env:
+      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
     steps:
       - uses: actions/checkout@v6
+      - id: tooling-token
+        # secrets are not readable from a step `if`, so the job exposes the id as env.
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.tooling-app-id }}
+          private-key: ${{ secrets.tooling-app-private-key }}
+          owner: Gradient-DS
+          repositories: security-ci
+
       - uses: actions/checkout@v6
         with:
-          repository: Gradient-DS/.github
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ inputs.tooling-ref }}
           path: ${{ env.TOOLING_PATH }}
       - uses: actions/setup-python@v6
@@ -408,10 +485,23 @@ jobs:
       # checkout steps below need.
       contents: read
       issues: write
+    env:
+      TOOLING_APP_ID: ${{ secrets.tooling-app-id }}
     steps:
+      - id: tooling-token
+        # secrets are not readable from a step `if`, so the job exposes the id as env.
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.tooling-app-id }}
+          private-key: ${{ secrets.tooling-app-private-key }}
+          owner: Gradient-DS
+          repositories: security-ci
+
       - uses: actions/checkout@v6
         with:
-          repository: Gradient-DS/.github
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ inputs.tooling-ref }}
           path: .security-tooling
       - uses: actions/setup-python@v6
