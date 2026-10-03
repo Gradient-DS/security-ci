@@ -1,0 +1,79 @@
+name: Check for a tested tree
+description: >-
+  Answers whether a passing run of this workflow already tested exactly the
+  tree of the commit being pushed, as recorded by `tested-tree/record`.
+  hit=true ONLY on an exact tree match. See README.md.
+inputs:
+  workflow-key:
+    description: 'The key the record was made under. [A-Za-z0-9._-] only.'
+    required: true
+  sha:
+    description: 'The commit whose tree to look up. Default: github.sha, the pushed commit.'
+    default: ${{ github.sha }}
+  token:
+    description: 'Token with contents: read and actions: read on this repository.'
+    default: ${{ github.token }}
+outputs:
+  hit:
+    description: "'true' when a record for exactly this tree exists, else 'false'."
+    value: ${{ steps.check.outputs.hit }}
+  tree:
+    description: 'The tree id that was looked up.'
+    value: ${{ steps.check.outputs.tree }}
+  run-url:
+    description: 'The run that recorded the tree, on a hit.'
+    value: ${{ steps.check.outputs.run-url }}
+runs:
+  using: composite
+  steps:
+    - name: Look up the tree
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        KEY: ${{ inputs.workflow-key }}
+        SHA: ${{ inputs.sha }}
+        # owner/repo/.github/workflows/x.yml@ref -> .github/workflows/x.yml
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      run: |
+        set -euo pipefail
+        [[ "$KEY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::workflow-key must match [A-Za-z0-9._-]+, got '$KEY'"; exit 1; }
+        TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SHA" --jq .tree.sha)
+        [[ "$TREE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || { echo "::error::no tree for commit $SHA"; exit 1; }
+        NAME="tested-tree-$KEY-$TREE"
+        echo "tree=$TREE" >> "$GITHUB_OUTPUT"
+
+        WORKFLOW_PATH="${WORKFLOW_REF#"$GITHUB_REPOSITORY"/}"
+        WORKFLOW_PATH="${WORKFLOW_PATH%@*}"
+
+        # The name filter is an exact match. Expired records do not count.
+        # Any lookup error fails this step rather than answering hit=false
+        # silently, so a broken check is visible; a caller that prefers to
+        # run everything on error can continue-on-error and treat the
+        # missing output as a miss.
+        RUN_IDS=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=100" \
+          --jq '.artifacts[] | select(.expired == false) | .workflow_run.id')
+
+        # The record must come from a run of this same workflow file. The
+        # tree contains the workflow file, so a run of it on the same tree ran
+        # the same jobs; a record from any other workflow proves nothing.
+        HIT=false
+        RUN_URL=
+        for id in $RUN_IDS; do
+          path=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .path)
+          if [ "$path" = "$WORKFLOW_PATH" ]; then
+            HIT=true
+            RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+            break
+          fi
+          echo "Ignoring $NAME from run $id: recorded by $path, not $WORKFLOW_PATH"
+        done
+
+        echo "hit=$HIT" >> "$GITHUB_OUTPUT"
+        echo "run-url=$RUN_URL" >> "$GITHUB_OUTPUT"
+        if [ "$HIT" = true ]; then
+          echo "Tree $TREE of $SHA was tested for '$KEY' by $RUN_URL"
+          echo "Tree \`$TREE\` was already tested for \`$KEY\` by $RUN_URL" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "No passing record of tree $TREE for '$KEY'; running everything"
+        fi

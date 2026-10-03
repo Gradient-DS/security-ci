@@ -1,0 +1,62 @@
+name: Record a tested tree
+description: >-
+  Marks the git tree this run tested as passed, for `tested-tree/check` to
+  find on a later push of the exact same tree. Run it as the LAST job of the
+  workflow, gated on every required job having succeeded. See README.md.
+inputs:
+  workflow-key:
+    description: >-
+      Names what was tested, e.g. `tests` or `security`, so each workflow
+      records and checks separately. [A-Za-z0-9._-] only.
+    required: true
+  sha:
+    description: >-
+      The commit whose tree was tested. The default, github.sha, is the
+      refs/pull/N/merge commit in a pull_request run: the tree that lands if
+      the PR merges with the base as it was when the run started.
+    default: ${{ github.sha }}
+  retention-days:
+    description: 'How long the record stays findable.'
+    default: '14'
+  token:
+    description: 'Token with contents: read on this repository.'
+    default: ${{ github.token }}
+outputs:
+  tree:
+    description: 'The tree id that was recorded.'
+    value: ${{ steps.tree.outputs.tree }}
+  artifact-name:
+    description: 'Name of the uploaded record.'
+    value: ${{ steps.tree.outputs.name }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve the tested tree
+      id: tree
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        KEY: ${{ inputs.workflow-key }}
+        SHA: ${{ inputs.sha }}
+        RECORD_DIR: ${{ runner.temp }}/tested-tree
+      run: |
+        set -euo pipefail
+        [[ "$KEY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::workflow-key must match [A-Za-z0-9._-]+, got '$KEY'"; exit 1; }
+        # Through the API, so the job needs no checkout.
+        TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SHA" --jq .tree.sha)
+        [[ "$TREE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || { echo "::error::no tree for commit $SHA"; exit 1; }
+        mkdir -p "$RECORD_DIR"
+        printf 'tree=%s\nsha=%s\nevent=%s\nrun=%s/%s/actions/runs/%s/attempts/%s\n' \
+          "$TREE" "$SHA" "$GITHUB_EVENT_NAME" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" \
+          "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RECORD_DIR/tested-tree.txt"
+        echo "tree=$TREE" >> "$GITHUB_OUTPUT"
+        echo "name=tested-tree-$KEY-$TREE" >> "$GITHUB_OUTPUT"
+        echo "Recording tree $TREE of $SHA as tested for '$KEY'"
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.tree.outputs.name }}
+        path: ${{ runner.temp }}/tested-tree/tested-tree.txt
+        retention-days: ${{ inputs.retention-days }}
+        overwrite: true
+        if-no-files-found: error
