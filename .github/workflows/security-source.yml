@@ -213,6 +213,25 @@ jobs:
           enable-cache: true
           python-version: '3.12'
 
+      # Only what pip downloads to resolve the hand-written files. The
+      # advisory lookups go to a fresh per-run cache (--cache-dir below), so
+      # no restored entry can answer a vulnerability query.
+      - name: Key the pip cache
+        id: pip-cache-key
+        if: inputs.python-requirements != '' && !inputs.python-uv
+        env:
+          PYTHON_REQS: ${{ inputs.python-requirements }}
+        run: |
+          # shellcheck disable=SC2086
+          echo "hash=$(cat $PYTHON_REQS 2>/dev/null | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v5
+        if: inputs.python-requirements != '' && !inputs.python-uv
+        with:
+          path: ~/.cache/pip
+          key: pip-audit-${{ runner.os }}-${{ steps.pip-cache-key.outputs.hash }}
+          restore-keys: pip-audit-${{ runner.os }}-
+
       - name: Python Dependencies (pip-audit)
         id: pip-audit
         if: inputs.python-requirements != '' || inputs.python-uv
@@ -222,6 +241,7 @@ jobs:
           EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
           PYTHON_UV: ${{ inputs.python-uv }}
           PYTHON_REQS: ${{ inputs.python-requirements }}
+          VULN_CACHE: ${{ runner.temp }}/pip-audit-vuln-cache
           # A private git pin makes pip shell out to git for a clone. The token
           # reaches git through its environment-variable config only, and only
           # in this step; without a token GIT_CONFIG_COUNT is 0 and git reads
@@ -233,24 +253,65 @@ jobs:
           pip install pip-audit
           PIP_AUDIT_ARGS=$(python "$TOOLING_PATH"/scripts/security_exceptions.py \
                              --file "$EXCEPTIONS_FILE" --emit-args)
+          export PIP_AUDIT_ARGS
 
+          FILES="$PYTHON_REQS"
           if [ "$PYTHON_UV" = "true" ]; then
             uv export --format requirements-txt --no-emit-project \
               --no-hashes --all-extras --no-dev > /tmp/uv-reqs.txt
-            # shellcheck disable=SC2086
-            pip-audit --desc on -r /tmp/uv-reqs.txt $PIP_AUDIT_ARGS
-            exit 0
+            FILES=/tmp/uv-reqs.txt
           fi
+
+          # A file that already lists its full closure (uv-generated, every
+          # requirement pinned) is audited as listed: --no-deps --disable-pip,
+          # no venv, no resolve. Any other file is resolved in a scratch venv
+          # exactly as before, because its pins are not the whole closure.
+          # shellcheck disable=SC2086
+          PLAN=$(python "$TOOLING_PATH"/scripts/requirements_closure.py $FILES)
+          echo "$PLAN"
+
+          LOGS=$(mktemp -d)
+          audit() { # mode file -> writes <log>.out and <log>.rc
+            local mode=$1 f=$2 log frc=0
+            log="$LOGS/$(printf '%s' "$f" | tr '/' '_')"
+            # `|| frc=$?`: the step shell runs with -e, which would otherwise
+            # end the loop at the first file with a finding.
+            if [ "$mode" = "no-deps" ]; then
+              # shellcheck disable=SC2086
+              pip-audit --desc on --cache-dir "$VULN_CACHE" -r "$f" --no-deps --disable-pip $PIP_AUDIT_ARGS > "$log.out" 2>&1 || frc=$?
+            else
+              # shellcheck disable=SC2086
+              pip-audit --desc on --cache-dir "$VULN_CACHE" -r "$f" $PIP_AUDIT_ARGS > "$log.out" 2>&1 || frc=$?
+            fi
+            echo "$frc" > "$log.rc"
+          }
+          export -f audit
+          export LOGS VULN_CACHE
+
+          # The resolving audits are independent scratch venvs, so they run
+          # four at a time; the --no-deps ones take seconds and run serially.
+          # shellcheck disable=SC2016 # $1 is expanded by the inner bash
+          printf '%s\n' "$PLAN" | awk -F'\t' '$1=="resolve"{print $2}' \
+            | xargs -r -P 4 -I{} bash -c 'audit resolve "$1"' _ {}
+          printf '%s\n' "$PLAN" | awk -F'\t' '$1=="no-deps"{print $2}' \
+            | while IFS= read -r f; do audit no-deps "$f"; done
 
           # Every file is audited even after one fails, so a single run
           # reports every offending file; the accumulator keeps a later clean
-          # file from masking an earlier failure.
+          # file from masking an earlier failure. A file with no recorded exit
+          # status was never audited, and fails closed.
           rc=0
           # shellcheck disable=SC2086
-          for f in $PYTHON_REQS; do
+          for f in $FILES; do
+            log="$LOGS/$(printf '%s' "$f" | tr '/' '_')"
             echo "::group::pip-audit $f"
-            pip-audit --desc on -r "$f" $PIP_AUDIT_ARGS || rc=1
+            cat "$log.out" 2>/dev/null
             echo "::endgroup::"
+            frc=$(cat "$log.rc" 2>/dev/null || echo missing)
+            if [ "$frc" != "0" ]; then
+              echo "::error::pip-audit $f failed (exit $frc)"
+              rc=1
+            fi
           done
           exit "$rc"
 
