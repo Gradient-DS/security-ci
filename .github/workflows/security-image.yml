@@ -66,6 +66,17 @@ on:
           calling job must allow `packages: read`.
         type: string
         default: ''
+      no-cache-filters:
+        description: >-
+          Newline- or comma-separated Dockerfile stage names to rebuild without
+          cache, passed to docker/build-push-action's `no-cache-filters`. Name
+          the stage that runs `apt-get upgrade` / `apk upgrade`, so the scanned
+          image carries today's OS packages even when the layers above it are
+          unchanged and cached. Replaces the date-valued `*_UPGRADE_EPOCH`
+          build-arg workaround. Every stage built after a filtered one is
+          rebuilt too when its base changes. Ignored with image-ref.
+        type: string
+        default: ''
       image-ref:
         description: >-
           A pushed image to scan instead of building one, as
@@ -248,6 +259,7 @@ jobs:
           secrets: ${{ secrets.build-secrets }}
           cache-from: ${{ steps.cache.outputs.from }}
           cache-to: ${{ steps.cache.outputs.to }}
+          no-cache-filters: ${{ inputs.no-cache-filters }}
 
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
