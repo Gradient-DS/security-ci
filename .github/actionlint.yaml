@@ -1,0 +1,6 @@
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # job.workflow_sha (the commit of the reusable workflow file itself) is
+      # documented in the `job` context but not yet in actionlint's schema.
+      - 'property "workflow_sha" is not defined in object type'

@@ -29,11 +29,16 @@ on:
         default: '.github/security-exceptions.yml'
       tooling-ref:
         description: >-
-          Ref of Gradient-DS/security-ci to take the helper scripts from. Defaults to
-          the release tag; override to test a paired workflow + helper change on a
-          branch, or to keep the helper in step with a caller pinned at @main.
+          Ref of Gradient-DS/security-ci to take the helper scripts from. Empty (the
+          default) means the commit this workflow file was loaded from
+          (job.workflow_sha), so the helpers always match the workflow a
+          caller pinned. Override only to test a paired change on a branch.
         type: string
-        default: 'v1'
+        default: ''
+      timeout-minutes:
+        description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
+        type: number
+        default: 20
     secrets:
       git-token:
         description: >-
@@ -71,6 +76,7 @@ jobs:
   scan:
     name: Source scans
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     outputs:
@@ -82,6 +88,17 @@ jobs:
           # This necessarily fetches every ref, which is why the gitleaks scan
           # has to restrict itself to HEAD explicitly.
           fetch-depth: 0
+
+      - name: Resolve the tooling ref
+        id: tooling-ref
+        env:
+          # job.workflow_sha is the commit of THIS reusable workflow file, not
+          # the caller's. An empty ref would make checkout fall back to the
+          # default branch silently, so it fails instead.
+          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
+        run: |
+          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
       - id: tooling-token
         # secrets are not readable from a step `if`, so the job exposes the id as env.
@@ -98,7 +115,7 @@ jobs:
         with:
           repository: Gradient-DS/security-ci
           token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
+          ref: ${{ steps.tooling-ref.outputs.ref }}
           path: ${{ env.TOOLING_PATH }}
 
       - uses: actions/setup-python@v6
@@ -484,6 +501,7 @@ jobs:
     needs: [scan]
     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       # `issues: write` alone drops the implicit `contents: read`, which the two
       # checkout steps below need.
@@ -492,6 +510,17 @@ jobs:
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
+      - name: Resolve the tooling ref
+        id: tooling-ref
+        env:
+          # job.workflow_sha is the commit of THIS reusable workflow file, not
+          # the caller's. An empty ref would make checkout fall back to the
+          # default branch silently, so it fails instead.
+          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
+        run: |
+          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
       - id: tooling-token
         # secrets are not readable from a step `if`, so the job exposes the id as env.
         if: env.TOOLING_APP_ID != ''
@@ -506,7 +535,7 @@ jobs:
         with:
           repository: Gradient-DS/security-ci
           token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
+          ref: ${{ steps.tooling-ref.outputs.ref }}
           path: .security-tooling
       - uses: actions/setup-python@v6
         with:
