@@ -106,3 +106,9 @@ def test_plan_without_write_or_scope_writes_nothing(tmp_path, scope, write):
 def test_plan_fails_when_nothing_is_built(tmp_path):
     rc, _, out = _plan(tmp_path, "rt", "true", "", {"name": "p", "services": {"db": {"image": "x"}}})
     assert rc != 0 and out == ""
+
+
+def test_no_checkout_leaves_a_token_in_the_build_context():
+    checkouts = [s for s in _steps() if str(s.get("uses", "")).startswith("actions/checkout")]
+    assert len(checkouts) == 2
+    assert all(s["with"]["persist-credentials"] is False for s in checkouts)
