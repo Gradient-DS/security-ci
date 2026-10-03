@@ -26,3 +26,25 @@ def issue_body(repo: str, run_url: str, failed_jobs: list[str]) -> str:
         "policy: upgrade if a fix exists, otherwise replace the package, "
         "otherwise request an exception from @Gradient-DS/security.\n"
     )
+
+
+IMAGE_TITLE_PREFIX = "Scheduled image scan failing"
+
+
+def image_issue_title(repo: str, image_name: str) -> str:
+    return f"{IMAGE_TITLE_PREFIX}: {repo} / {image_name}"
+
+
+def image_issue_body(repo: str, image_name: str, image: str, run_url: str,
+                     failed_scanners: list[str]) -> str:
+    scanners = "\n".join(f"- `{s}`" for s in failed_scanners) if failed_scanners else "- (see run)"
+    return (
+        f"The scheduled image scan of **{image_name}** in **{repo}** failed.\n\n"
+        f"Image: `{image or '(not resolved; see run)'}`\n\n"
+        f"Failed scanners:\n{scanners}\n\n"
+        f"Run: {run_url}\n\n"
+        "This is a scheduled run, so it blocks no PR. It still means a new "
+        "advisory landed against an image that is already published. Per the "
+        "exception policy: rebuild or upgrade if a fix exists, otherwise replace "
+        "the package, otherwise request an exception from @Gradient-DS/security.\n"
+    )
