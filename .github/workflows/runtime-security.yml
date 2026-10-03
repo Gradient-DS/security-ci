@@ -228,6 +228,9 @@ jobs:
         uses: docker/bake-action@v7
         env:
           GH_TOKEN: ${{ steps.tooling-token.outputs.token }}
+          # No build-record artifact: on a public repository it is downloadable
+          # by anyone, and the audit needs only the loaded images.
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
           # The checked-out workspace, as compose would build it; not the Git
           # context, which would skip whatever the compose file expects on disk.
