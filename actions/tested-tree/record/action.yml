@@ -28,6 +28,12 @@ outputs:
   artifact-name:
     description: 'Name of the uploaded record.'
     value: ${{ steps.tree.outputs.name }}
+  recorded:
+    description: >-
+      'true' when a record was uploaded; 'false' when the run is not a
+      pull_request from a branch of this repository, which `check` would
+      never trust.
+    value: ${{ steps.tree.outputs.recorded }}
 runs:
   using: composite
   steps:
@@ -39,21 +45,13 @@ runs:
         KEY: ${{ inputs.workflow-key }}
         SHA: ${{ inputs.sha }}
         RECORD_DIR: ${{ runner.temp }}/tested-tree
-      run: |
-        set -euo pipefail
-        [[ "$KEY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::workflow-key must match [A-Za-z0-9._-]+, got '$KEY'"; exit 1; }
-        # Through the API, so the job needs no checkout.
-        TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SHA" --jq .tree.sha)
-        [[ "$TREE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || { echo "::error::no tree for commit $SHA"; exit 1; }
-        mkdir -p "$RECORD_DIR"
-        printf 'tree=%s\nsha=%s\nevent=%s\nrun=%s/%s/actions/runs/%s/attempts/%s\n' \
-          "$TREE" "$SHA" "$GITHUB_EVENT_NAME" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" \
-          "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RECORD_DIR/tested-tree.txt"
-        echo "tree=$TREE" >> "$GITHUB_OUTPUT"
-        echo "name=tested-tree-$KEY-$TREE" >> "$GITHUB_OUTPUT"
-        echo "Recording tree $TREE of $SHA as tested for '$KEY'"
+      # Refuses (recorded=false, nothing uploaded) unless this is a
+      # pull_request run from a branch of this repository: `check` trusts no
+      # other record, and a fork PR's record is exactly what must not exist.
+      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/tested_tree.py" record
 
-    - uses: actions/upload-artifact@v7
+    - if: steps.tree.outputs.recorded == 'true'
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.tree.outputs.name }}
         path: ${{ runner.temp }}/tested-tree/tested-tree.txt
