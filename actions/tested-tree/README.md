@@ -71,7 +71,10 @@ jobs:
 
   record:
     needs: [test]
-    if: github.event_name == 'pull_request' && needs.test.result == 'success'
+    # !cancelled() is required: without a status function GitHub's implicit
+    # success() also sees the skipped `reuse` upstream of `test`, so record
+    # would never run on a PR.
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
