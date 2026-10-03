@@ -16,13 +16,15 @@ else.
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, pip-audit, npm audit and trivy config, plus the exception-file gate |
-| `.github/workflows/security-image.yml` | Reusable: container build and Trivy image scan |
+| `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, pip-audit, npm audit and trivy config, plus the exception-file gate, as steps of one `Source scans` job |
+| `.github/workflows/security-image.yml` | Reusable: Trivy image scan, of an image it builds or of a pushed digest (`image-ref`) |
 | `.github/workflows/runtime-security.yml` | Reusable: brings up a caller's stack under Falco, drives its traffic, gates on egress and sensitive reads |
 | `.github/workflows/tooling-token-smoke.yml` | Diagnostic: proves the org App can read this repository |
+| `actions/tested-tree/{record,check}` | Composite: reuse a passing run's result on a push of the exact same git tree ([README](actions/tested-tree/README.md)) |
 | `scripts/runtime_gate.py` | Decides the `runtime-gate` verdict. A skipped audit is never a pass |
 | `scripts/security_exceptions.py` | Validates per-repo exception files and their expiry |
 | `scripts/notify_scheduled_failure.py` | Notifies on a failed scheduled run |
+| `scripts/requirements_closure.py` | Decides which requirements files pip-audit may audit without resolving |
 | `falco/rules/ci-egress.yaml` | Egress and sensitive-read rules, plus the sensor self-test |
 | `packages/openapi-surface` | OpenAPI introspection: body skeletons, writable and constrained fields |
 | `packages/hostile-corpus` | The hostile payloads and shapes the attack planes drive |
@@ -91,6 +93,26 @@ repository in the org.
 If a consumer fails at the tooling checkout with a 404, run the
 `Tooling token smoke test` workflow here first: it separates an App problem
 from a workflow problem.
+
+## Image scan inputs (v6)
+
+| Input | Default | Use |
+| --- | --- | --- |
+| `maximize-build-space` | `false` | Frees ~30 GB of runner disk first (~90 s). Only for images that do not fit otherwise. |
+| `cache-scope` | `image-name` | GHA cache scope the build reads (then the default scope) and writes. |
+| `cache-write` | `true` | Write the build's layers back (`mode=max`). Off for a repo over its GHA cache limit. |
+| `cache-from` | `''` | Replaces the gha cache sources, e.g. a `type=registry` ref. ghcr.io is read with `GITHUB_TOKEN`. |
+| `image-ref` | `''` | Scan this pushed `name@sha256:...` instead of building. Same Trivy settings and exceptions. |
+| `timeout-minutes` | `40` | Job timeout (Trivy alone may take 20). |
+
+The image job asks for `packages: read` (for `image-ref` and a ghcr.io
+`cache-from`). It is part of the restricted default token, so a caller only
+has to grant it if it narrows the calling job's `permissions:`.
+
+Both reusable scan workflows take `timeout-minutes` (source: 20) and a
+`tooling-ref` that is empty by default, meaning the commit the reusable
+workflow was itself loaded from (`job.workflow_sha`), so the helpers always
+match the pinned workflow.
 
 ## Tests
 
