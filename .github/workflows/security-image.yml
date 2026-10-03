@@ -29,6 +29,14 @@ on:
           branch, or to keep the helper in step with a caller pinned at @main.
         type: string
         default: 'v1'
+      maximize-build-space:
+        description: >-
+          Free ~30 GB of runner disk (Android SDK, GHC, CodeQL) before the
+          build. Costs ~90 s per job, so only images that do not fit the stock
+          runner disk should set it (torch/CUDA-sized images such as crawl4ai,
+          dp-web-fetch, agents-api, dp-worker, dp-vectordb-lifecycle).
+        type: boolean
+        default: false
     secrets:
       build-secrets:
         description: >-
@@ -107,6 +115,7 @@ jobs:
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       - name: Maximize build space
+        if: inputs.maximize-build-space
         # SHA-pinned, not tag-pinned: this is the suite's only non-mainstream
         # third-party action and a mutable tag would let a retag execute
         # arbitrary code inside a security gate across nine repos.
