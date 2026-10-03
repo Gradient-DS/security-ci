@@ -4,13 +4,13 @@ on:
   workflow_call:
     inputs:
       context:
-        description: 'Docker build context, e.g. ./server'
+        description: 'Docker build context, e.g. ./server. Required unless image-ref is set.'
         type: string
-        required: true
+        default: ''
       dockerfile:
-        description: 'Dockerfile path relative to the repo root.'
+        description: 'Dockerfile path relative to the repo root. Required unless image-ref is set.'
         type: string
-        required: true
+        default: ''
       image-name:
         description: 'Local tag for the built image; appears in scan output.'
         type: string
@@ -61,6 +61,18 @@ on:
           calling job must allow `packages: read`.
         type: string
         default: ''
+      image-ref:
+        description: >-
+          A pushed image to scan instead of building one, as
+          `<registry>/<name>@sha256:<digest>`. A digest, never a tag: the scan
+          has to be of the exact bytes that ship, and a tag can move between
+          the push and the scan. Trivy runs with the same scanners, severity,
+          ignore-unfixed and exception file as the build path. A ghcr.io image
+          is pulled with GITHUB_TOKEN, so the calling job needs
+          `packages: read` and the package must grant the caller repository
+          read access.
+        type: string
+        default: ''
     secrets:
       build-secrets:
         description: >-
@@ -99,6 +111,22 @@ jobs:
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
+      - name: Check the scan target
+        env:
+          IMAGE_REF: ${{ inputs.image-ref }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          if [ -n "$IMAGE_REF" ]; then
+            case "$IMAGE_REF" in
+              *@sha256:*) echo "Scanning pushed image $IMAGE_REF" ;;
+              *) echo "::error::image-ref must pin a digest (<name>@sha256:<digest>), got '$IMAGE_REF'"; exit 1 ;;
+            esac
+          elif [ -z "$CONTEXT" ] || [ -z "$DOCKERFILE" ]; then
+            echo "::error::context and dockerfile are required unless image-ref is set"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
 
       - id: tooling-token
@@ -152,17 +180,20 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - uses: docker/setup-buildx-action@v4
-
-      - name: Log in to ghcr.io for the registry cache
-        if: contains(inputs.cache-from, 'ghcr.io')
+      - name: Log in to ghcr.io
+        # The pushed image to scan, or a registry cache source for the build.
+        if: startsWith(inputs.image-ref, 'ghcr.io/') || (inputs.image-ref == '' && contains(inputs.cache-from, 'ghcr.io'))
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - uses: docker/setup-buildx-action@v4
+        if: inputs.image-ref == ''
+
       - name: Resolve build cache
+        if: inputs.image-ref == ''
         id: cache
         env:
           SCOPE: ${{ inputs.cache-scope || inputs.image-name }}
@@ -188,6 +219,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build image for scanning
+        if: inputs.image-ref == ''
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
@@ -203,7 +235,7 @@ jobs:
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: '${{ inputs.image-name }}:scan'
+          image-ref: ${{ inputs.image-ref || format('{0}:scan', inputs.image-name) }}
           format: 'table'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
