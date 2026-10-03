@@ -40,12 +40,17 @@ on:
         default: '0.44.1'
       tooling-ref:
         description: >-
-          Ref of Gradient-DS/security-ci to take the Falco rules from. Defaults to
-          the release tag; override to test a paired workflow + rules change on
-          a branch.
+          Ref of Gradient-DS/security-ci to take the Falco rules from. Empty (the
+          default) means the commit this workflow file was loaded from
+          (job.workflow_sha), so the rules always match the workflow a
+          caller pinned. Override only to test a paired change on a branch.
         type: string
         required: false
-        default: 'v1'
+        default: ''
+      timeout-minutes:
+        description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
+        type: number
+        default: 30
       enforce:
         description: 'Whether findings fail the job.'
         type: boolean
@@ -75,12 +80,24 @@ jobs:
   runtime-audit:
     name: Runtime egress and sensitive-read audit
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve the tooling ref
+        id: tooling-ref
+        env:
+          # job.workflow_sha is the commit of THIS reusable workflow file, not
+          # the caller's. An empty ref would make checkout fall back to the
+          # default branch silently, so it fails instead.
+          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
+        run: |
+          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
       - id: tooling-token
         # secrets are not readable from a step `if`, so the job exposes the id as env.
@@ -96,7 +113,7 @@ jobs:
         with:
           repository: Gradient-DS/security-ci
           token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
+          ref: ${{ steps.tooling-ref.outputs.ref }}
           path: ${{ env.TOOLING_PATH }}
 
       - name: Point the shared rules at this repo's containers

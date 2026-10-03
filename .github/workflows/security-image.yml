@@ -4,13 +4,13 @@ on:
   workflow_call:
     inputs:
       context:
-        description: 'Docker build context, e.g. ./server'
+        description: 'Docker build context, e.g. ./server. Required unless image-ref is set.'
         type: string
-        required: true
+        default: ''
       dockerfile:
-        description: 'Dockerfile path relative to the repo root.'
+        description: 'Dockerfile path relative to the repo root. Required unless image-ref is set.'
         type: string
-        required: true
+        default: ''
       image-name:
         description: 'Local tag for the built image; appears in scan output.'
         type: string
@@ -24,11 +24,60 @@ on:
         default: '.github/security-exceptions.yml'
       tooling-ref:
         description: >-
-          Ref of Gradient-DS/security-ci to take the helper scripts from. Defaults to
-          the release tag; override to test a paired workflow + helper change on a
-          branch, or to keep the helper in step with a caller pinned at @main.
+          Ref of Gradient-DS/security-ci to take the helper scripts from. Empty (the
+          default) means the commit this workflow file was loaded from
+          (job.workflow_sha), so the helpers always match the workflow a
+          caller pinned. Override only to test a paired change on a branch.
         type: string
-        default: 'v1'
+        default: ''
+      timeout-minutes:
+        description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
+        type: number
+        default: 40
+      maximize-build-space:
+        description: >-
+          Free ~30 GB of runner disk (Android SDK, GHC, CodeQL) before the
+          build. Costs ~90 s per job, so only images that do not fit the stock
+          runner disk should set it (torch/CUDA-sized images such as crawl4ai,
+          dp-web-fetch, agents-api, dp-worker, dp-vectordb-lifecycle).
+        type: boolean
+        default: false
+      cache-scope:
+        description: >-
+          GitHub Actions cache scope for this image's BuildKit layers. Defaults
+          to image-name, so the images of one repository stop evicting each
+          other's layers from the shared default scope. The build still also
+          reads the default scope, where unscoped build workflows write.
+        type: string
+        default: ''
+      cache-write:
+        description: >-
+          Write the scan build's layers back to the cache scope (mode=max).
+          Turn it off for a repository whose GHA cache is already over its
+          limit and that reads a registry cache through `cache-from` instead.
+        type: boolean
+        default: true
+      cache-from:
+        description: >-
+          Newline-separated BuildKit cache sources that REPLACE the default
+          gha sources, e.g. `type=registry,ref=ghcr.io/org/app:buildcache` for
+          a repository whose build workflow already maintains a registry
+          cache. A ghcr.io source is read with this run's GITHUB_TOKEN, so the
+          calling job must allow `packages: read`.
+        type: string
+        default: ''
+      image-ref:
+        description: >-
+          A pushed image to scan instead of building one, as
+          `<registry>/<name>@sha256:<digest>`. A digest, never a tag: the scan
+          has to be of the exact bytes that ship, and a tag can move between
+          the push and the scan. Trivy runs with the same scanners, severity,
+          ignore-unfixed and exception file as the build path. A ghcr.io image
+          is pulled with GITHUB_TOKEN, so the calling job needs
+          `packages: read` and the package must grant the caller repository
+          read access.
+        type: string
+        default: ''
     secrets:
       build-secrets:
         description: >-
@@ -57,14 +106,45 @@ jobs:
   scan:
     name: Container Scan (Trivy)
     runs-on: ubuntu-latest
-    # Least privilege: this job builds a PR-authored Dockerfile, so the only
-    # thing the token may do is read the sources being scanned.
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    # Least privilege: this job builds a PR-authored Dockerfile, so the token
+    # may only read: the sources being scanned, and ghcr.io packages for a
+    # registry cache source. `packages: read` is in the restricted default
+    # token, so a caller only has to name it if it narrows permissions.
     permissions:
       contents: read
+      packages: read
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
+      - name: Check the scan target
+        env:
+          IMAGE_REF: ${{ inputs.image-ref }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          if [ -n "$IMAGE_REF" ]; then
+            case "$IMAGE_REF" in
+              *@sha256:*) echo "Scanning pushed image $IMAGE_REF" ;;
+              *) echo "::error::image-ref must pin a digest (<name>@sha256:<digest>), got '$IMAGE_REF'"; exit 1 ;;
+            esac
+          elif [ -z "$CONTEXT" ] || [ -z "$DOCKERFILE" ]; then
+            echo "::error::context and dockerfile are required unless image-ref is set"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
+
+      - name: Resolve the tooling ref
+        id: tooling-ref
+        env:
+          # job.workflow_sha is the commit of THIS reusable workflow file, not
+          # the caller's. An empty ref would make checkout fall back to the
+          # default branch silently, so it fails instead.
+          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
+        run: |
+          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
       - id: tooling-token
         # secrets are not readable from a step `if`, so the job exposes the id as env.
@@ -80,7 +160,7 @@ jobs:
         with:
           repository: Gradient-DS/security-ci
           token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
+          ref: ${{ steps.tooling-ref.outputs.ref }}
           path: .security-tooling
 
       - uses: actions/setup-python@v6
@@ -107,6 +187,7 @@ jobs:
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       - name: Maximize build space
+        if: inputs.maximize-build-space
         # SHA-pinned, not tag-pinned: this is the suite's only non-mainstream
         # third-party action and a mutable tag would let a retag execute
         # arbitrary code inside a security gate across nine repos.
@@ -116,9 +197,46 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
+      - name: Log in to ghcr.io
+        # The pushed image to scan, or a registry cache source for the build.
+        if: startsWith(inputs.image-ref, 'ghcr.io/') || (inputs.image-ref == '' && contains(inputs.cache-from, 'ghcr.io'))
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
       - uses: docker/setup-buildx-action@v4
+        if: inputs.image-ref == ''
+
+      - name: Resolve build cache
+        if: inputs.image-ref == ''
+        id: cache
+        env:
+          SCOPE: ${{ inputs.cache-scope || inputs.image-name }}
+          CACHE_FROM: ${{ inputs.cache-from }}
+          CACHE_WRITE: ${{ inputs.cache-write }}
+        run: |
+          # The own scope first, then the default scope that unscoped build
+          # workflows still write to, so scoping costs no cache hits.
+          {
+            echo "from<<EOF_CACHE_FROM"
+            if [ -n "$CACHE_FROM" ]; then
+              printf '%s\n' "$CACHE_FROM"
+            else
+              echo "type=gha,scope=$SCOPE"
+              echo "type=gha"
+            fi
+            echo "EOF_CACHE_FROM"
+            if [ "$CACHE_WRITE" = "true" ]; then
+              echo "to=type=gha,scope=$SCOPE,mode=max"
+            else
+              echo "to="
+            fi
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build image for scanning
+        if: inputs.image-ref == ''
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
@@ -128,12 +246,13 @@ jobs:
           tags: ${{ inputs.image-name }}:scan
           build-args: ${{ inputs.build-args }}
           secrets: ${{ secrets.build-secrets }}
-          cache-from: type=gha
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}
 
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: '${{ inputs.image-name }}:scan'
+          image-ref: ${{ inputs.image-ref || format('{0}:scan', inputs.image-name) }}
           format: 'table'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
