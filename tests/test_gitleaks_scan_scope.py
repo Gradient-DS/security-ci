@@ -38,11 +38,11 @@ def _secrets_steps() -> list[dict]:
     # `on` is parsed as the boolean True by YAML 1.1, which is why this reads
     # jobs directly rather than validating the whole document.
     wf = yaml.safe_load(WORKFLOW.read_text())
-    return wf["jobs"]["secrets"]["steps"]
+    return wf["jobs"]["scan"]["steps"]
 
 
 def _gitleaks_step() -> dict:
-    """The step in the `secrets` job that actually runs the scan."""
+    """The step in the `scan` job that actually runs the gitleaks scan."""
     scans = [s for s in _secrets_steps() if "gitleaks git" in (s.get("run") or "")]
     assert len(scans) == 1, f"expected exactly one gitleaks scan step, found {len(scans)}"
     return scans[0]

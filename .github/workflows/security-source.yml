@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       python-paths:
-        description: 'Space-separated dirs for Bandit. Empty disables the job.'
+        description: 'Space-separated dirs for Bandit. Empty disables the scanner.'
         type: string
         default: ''
       python-requirements:
@@ -16,11 +16,11 @@ on:
         type: boolean
         default: false
       node-dirs:
-        description: 'Space-separated dirs holding a package-lock.json. Empty disables the job.'
+        description: 'Space-separated dirs holding a package-lock.json. Empty disables the scanner.'
         type: string
         default: ''
       trivy-config-paths:
-        description: 'Space-separated dirs for `trivy config` (IaC). Empty disables the job.'
+        description: 'Space-separated dirs for `trivy config` (IaC). Empty disables the scanner.'
         type: string
         default: ''
       exceptions-file:
@@ -63,67 +63,25 @@ env:
   TOOLING_PATH: .security-tooling
 
 jobs:
-  exceptions:
-    name: Exception file valid and unexpired
+  # One job, one step per scanner. Each scanner step continues on error and
+  # the last step fails the job if any enabled scanner failed, so every
+  # scanner still runs and reports on every run — what changed from v5 is
+  # only that the scanners no longer each pay for a runner (and a rounded-up
+  # billed minute) of their own.
+  scan:
+    name: Source scans
     runs-on: ubuntu-latest
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+    outputs:
+      failed: ${{ steps.verdict.outputs.failed }}
     steps:
       - uses: actions/checkout@v6
-      - id: tooling-token
-        # secrets are not readable from a step `if`, so the job exposes the id as env.
-        if: env.TOOLING_APP_ID != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
-          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
-          owner: Gradient-DS
-          repositories: security-ci
-
-      - uses: actions/checkout@v6
-        with:
-          repository: Gradient-DS/security-ci
-          token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ env.TOOLING_PATH }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: pip install pyyaml
-      - name: Validate schema and fail on expired entries
-        env:
-          TOOLING_PATH: ${{ env.TOOLING_PATH }}
-          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
-        run: |
-          python "$TOOLING_PATH"/scripts/security_exceptions.py \
-            --file "$EXCEPTIONS_FILE" --check-expiry
-
-  sast-python:
-    name: Python SAST (Bandit)
-    if: inputs.python-paths != ''
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: pip install bandit
-      - name: Run Bandit
-        env:
-          PYTHON_PATHS: ${{ inputs.python-paths }}
-        run: |
-          # shellcheck disable=SC2086
-          bandit -r $PYTHON_PATHS -ll --confidence-level=medium \
-            -x '*/node_modules/*,*/.venv/*,*/dist/*,*/.worktrees/*,*/.wt-*,*/tests/*'
-
-  sca-python:
-    name: Python Dependencies (pip-audit)
-    if: inputs.python-requirements != '' || inputs.python-uv
-    runs-on: ubuntu-latest
-    env:
-      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
-    steps:
-      - uses: actions/checkout@v6
+          # Full history, because gitleaks scans history and not just the tip.
+          # This necessarily fetches every ref, which is why the gitleaks scan
+          # has to restrict itself to HEAD explicitly.
+          fetch-depth: 0
 
       - id: tooling-token
         # secrets are not readable from a step `if`, so the job exposes the id as env.
@@ -147,55 +105,143 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install pip-audit pyyaml
+      - run: pip install pyyaml
 
-      - name: Collect ignore arguments
-        id: ignores
+      # ── Exception file ────────────────────────────────────────────────
+      - name: Exception file valid and unexpired
+        id: exceptions
+        continue-on-error: true
         env:
           TOOLING_PATH: ${{ env.TOOLING_PATH }}
           EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
         run: |
-          ARGS=$(python "$TOOLING_PATH"/scripts/security_exceptions.py \
-                   --file "$EXCEPTIONS_FILE" --emit-args)
-          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          python "$TOOLING_PATH"/scripts/security_exceptions.py \
+            --file "$EXCEPTIONS_FILE" --check-expiry
 
+      # ── Secrets (gitleaks) ────────────────────────────────────────────
+      - name: Secrets (gitleaks)
+        id: gitleaks
+        continue-on-error: true
+        env:
+          TOOLING_PATH: ${{ env.TOOLING_PATH }}
+          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
+          GITLEAKS_TAG: v8.30.1
+          # Written outside the workspace: a `.gitleaksignore` at the repo
+          # root would silently overwrite a caller-owned file of that name.
+          # --gitleaks-ignore-path accepts either a file or a directory
+          # containing a .gitleaksignore; we point it straight at the
+          # generated file. Confirmed against the pinned v8.30.1 binary via
+          # `gitleaks git --help`.
+          GITLEAKSIGNORE_PATH: ${{ runner.temp }}/security-exceptions.gitleaksignore
+        run: |
+          # pipefail: the default shell is `bash -e {0}`, so without this a
+          # failing curl in `curl | tar` is masked by tar's exit status.
+          set -euo pipefail
+
+          python "$TOOLING_PATH"/scripts/security_exceptions.py \
+            --file "$EXCEPTIONS_FILE" \
+            --emit-gitleaksignore "$GITLEAKSIGNORE_PATH"
+
+          VERSION="${GITLEAKS_TAG#v}"
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_TAG}"
+          TARBALL="gitleaks_${VERSION}_linux_x64.tar.gz"
+          WORK="$(mktemp -d)"
+
+          # Download, then verify against the checksums file published with the
+          # release, then extract. `gitleaks version` only catches a truncated
+          # download; it cannot detect a substituted binary.
+          curl -sSfL -o "$WORK/$TARBALL" "$BASE/$TARBALL"
+          curl -sSfL -o "$WORK/checksums.txt" "$BASE/gitleaks_${VERSION}_checksums.txt"
+
+          ( cd "$WORK" && grep " ${TARBALL}\$" checksums.txt | sha256sum -c - ) || {
+            echo "::error::gitleaks ${GITLEAKS_TAG} checksum verification failed — refusing to run an unverified binary"
+            exit 1
+          }
+
+          tar -xzf "$WORK/$TARBALL" -C "$WORK" gitleaks
+          GITLEAKS="$WORK/gitleaks"
+          "$GITLEAKS" version
+
+          # --log-opts is REQUIRED here; without it the scan is not scoped to
+          # this run's ref.
+          #
+          # `gitleaks git` runs `git log -p -U0 <log-opts>` and, given no
+          # --log-opts, defaults those options to `--full-history --all`.
+          # `--all` means every ref in the repository — and the checkout above
+          # uses fetch-depth: 0, which fetches every branch. A PR therefore
+          # failed on secrets committed to somebody else's unmerged branch,
+          # which the PR author cannot fix and which no exception can durably
+          # suppress: the fingerprint contains a commit SHA, so it changes the
+          # moment that branch is squash-merged and the same content then
+          # reappears on the default branch under a new fingerprint.
+          #
+          # Replacing the default with `--full-history HEAD` scopes the scan to
+          # commits reachable from this run's ref, which is what a gate should
+          # depend on:
+          #   pull_request -> the merge commit: base history + the PR's commits
+          #   push         -> the pushed branch
+          #   schedule     -> the default branch
+          #
+          # This is a narrowing of the ref set only, NOT a narrowing to the PR
+          # diff. Full history behind HEAD is still scanned, root commits
+          # included, so a secret committed and later deleted still fails the
+          # gate — verified against the pinned v8.30.1 binary.
+          "$GITLEAKS" git . --redact --exit-code 1 --verbose \
+            --log-opts="--full-history HEAD" \
+            --gitleaks-ignore-path "$GITLEAKSIGNORE_PATH"
+
+      # ── Python SAST (Bandit) ──────────────────────────────────────────
+      - name: Python SAST (Bandit)
+        id: bandit
+        if: inputs.python-paths != ''
+        continue-on-error: true
+        env:
+          PYTHON_PATHS: ${{ inputs.python-paths }}
+        run: |
+          pip install bandit
+          # shellcheck disable=SC2086
+          bandit -r $PYTHON_PATHS -ll --confidence-level=medium \
+            -x '*/node_modules/*,*/.venv/*,*/dist/*,*/.worktrees/*,*/.wt-*,*/tests/*'
+
+      # ── Python dependencies (pip-audit) ───────────────────────────────
       - name: Install uv
+        id: setup-uv
         if: inputs.python-uv
+        continue-on-error: true
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: '3.12'
 
-      # A private git pin makes pip shell out to git for a clone. The token
-      # reaches git through its environment-variable config only; an empty
-      # secret leaves the three variables empty, which git ignores.
-      - name: Point git at the private-dependency token
-        if: env.GIT_TOKEN != ''
+      - name: Python Dependencies (pip-audit)
+        id: pip-audit
+        if: inputs.python-requirements != '' || inputs.python-uv
+        continue-on-error: true
         env:
-          GIT_TOKEN: ${{ secrets.git-token }}
-        run: |
-          {
-            echo "GIT_CONFIG_COUNT=1"
-            echo "GIT_CONFIG_KEY_0=url.https://x-access-token:${GIT_TOKEN}@github.com/.insteadOf"
-            echo "GIT_CONFIG_VALUE_0=https://github.com/"
-          } >> "$GITHUB_ENV"
-
-      - name: Audit uv lockfile
-        if: inputs.python-uv
-        env:
-          PIP_AUDIT_ARGS: ${{ steps.ignores.outputs.args }}
-        run: |
-          uv export --format requirements-txt --no-emit-project \
-            --no-hashes --all-extras --no-dev > /tmp/uv-reqs.txt
-          # shellcheck disable=SC2086
-          pip-audit --desc on -r /tmp/uv-reqs.txt $PIP_AUDIT_ARGS
-
-      - name: Audit requirements files
-        if: '!inputs.python-uv'
-        env:
+          TOOLING_PATH: ${{ env.TOOLING_PATH }}
+          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
+          PYTHON_UV: ${{ inputs.python-uv }}
           PYTHON_REQS: ${{ inputs.python-requirements }}
-          PIP_AUDIT_ARGS: ${{ steps.ignores.outputs.args }}
+          # A private git pin makes pip shell out to git for a clone. The token
+          # reaches git through its environment-variable config only, and only
+          # in this step; without a token GIT_CONFIG_COUNT is 0 and git reads
+          # none of it.
+          GIT_CONFIG_COUNT: ${{ secrets.git-token != '' && '1' || '0' }}
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.git-token }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
         run: |
+          pip install pip-audit
+          PIP_AUDIT_ARGS=$(python "$TOOLING_PATH"/scripts/security_exceptions.py \
+                             --file "$EXCEPTIONS_FILE" --emit-args)
+
+          if [ "$PYTHON_UV" = "true" ]; then
+            uv export --format requirements-txt --no-emit-project \
+              --no-hashes --all-extras --no-dev > /tmp/uv-reqs.txt
+            # shellcheck disable=SC2086
+            pip-audit --desc on -r /tmp/uv-reqs.txt $PIP_AUDIT_ARGS
+            exit 0
+          fi
+
           # Every file is audited even after one fails, so a single run
           # reports every offending file; the accumulator keeps a later clean
           # file from masking an earlier failure.
@@ -208,38 +254,19 @@ jobs:
           done
           exit "$rc"
 
-  sca-node:
-    name: Node Dependencies (npm audit)
-    if: inputs.node-dirs != ''
-    runs-on: ubuntu-latest
-    env:
-      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
-    steps:
-      - uses: actions/checkout@v6
-      - id: tooling-token
-        # secrets are not readable from a step `if`, so the job exposes the id as env.
-        if: env.TOOLING_APP_ID != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
-          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
-          owner: Gradient-DS
-          repositories: security-ci
-
-      - uses: actions/checkout@v6
-        with:
-          repository: Gradient-DS/security-ci
-          token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ env.TOOLING_PATH }}
-      - uses: actions/setup-node@v6
+      # ── Node dependencies (npm audit) ─────────────────────────────────
+      - name: Install Node
+        id: setup-node
+        if: inputs.node-dirs != ''
+        continue-on-error: true
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: pip install pyyaml
-      - name: Audit each Node directory
+
+      - name: Node Dependencies (npm audit)
+        id: npm-audit
+        if: inputs.node-dirs != ''
+        continue-on-error: true
         env:
           # Values reach the shell through env, never interpolated into the
           # script text: a `${{ }}` substitution happens BEFORE the shell parses
@@ -273,188 +300,46 @@ jobs:
             echo "::endgroup::"
           done
 
-  secrets:
-    name: Secrets (gitleaks)
-    runs-on: ubuntu-latest
-    env:
-      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          # Full history, because gitleaks scans history and not just the tip.
-          # This necessarily fetches every ref, which is why the scan below
-          # has to restrict itself to HEAD explicitly.
-          fetch-depth: 0
-
-      - id: tooling-token
-        # secrets are not readable from a step `if`, so the job exposes the id as env.
-        if: env.TOOLING_APP_ID != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
-          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
-          owner: Gradient-DS
-          repositories: security-ci
-
-      - name: Check out shared tooling
-        uses: actions/checkout@v6
-        with:
-          repository: Gradient-DS/security-ci
-          token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ env.TOOLING_PATH }}
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - run: pip install pyyaml
-
-      - name: Generate gitleaksignore file from exceptions
-        env:
-          TOOLING_PATH: ${{ env.TOOLING_PATH }}
-          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
-          # Written outside the workspace: a `.gitleaksignore` at the repo
-          # root would silently overwrite a caller-owned file of that name.
-          GITLEAKSIGNORE_PATH: ${{ runner.temp }}/security-exceptions.gitleaksignore
-        run: |
-          python "$TOOLING_PATH"/scripts/security_exceptions.py \
-            --file "$EXCEPTIONS_FILE" \
-            --emit-gitleaksignore "$GITLEAKSIGNORE_PATH"
-
-      - name: Install gitleaks
-        env:
-          GITLEAKS_TAG: v8.30.1
-        run: |
-          # pipefail: the default shell is `bash -e {0}`, so without this a
-          # failing curl in `curl | tar` is masked by tar's exit status.
-          set -euo pipefail
-
-          VERSION="${GITLEAKS_TAG#v}"
-          BASE="https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_TAG}"
-          TARBALL="gitleaks_${VERSION}_linux_x64.tar.gz"
-          WORK="$(mktemp -d)"
-
-          # Download, then verify against the checksums file published with the
-          # release, then extract. `gitleaks version` only catches a truncated
-          # download; it cannot detect a substituted binary.
-          curl -sSfL -o "$WORK/$TARBALL" "$BASE/$TARBALL"
-          curl -sSfL -o "$WORK/checksums.txt" "$BASE/gitleaks_${VERSION}_checksums.txt"
-
-          ( cd "$WORK" && grep " ${TARBALL}\$" checksums.txt | sha256sum -c - ) || {
-            echo "::error::gitleaks ${GITLEAKS_TAG} checksum verification failed — refusing to run an unverified binary"
-            exit 1
-          }
-
-          tar -xzf "$WORK/$TARBALL" -C /usr/local/bin gitleaks
-          rm -rf "$WORK"
-          gitleaks version
-
-      - name: Scan history reachable from HEAD
-        env:
-          # --gitleaks-ignore-path accepts either a file or a directory
-          # containing a .gitleaksignore; we point it straight at the
-          # generated file. Confirmed against the pinned v8.30.1 binary via
-          # `gitleaks git --help`.
-          GITLEAKSIGNORE_PATH: ${{ runner.temp }}/security-exceptions.gitleaksignore
-        run: |
-          # --log-opts is REQUIRED here; without it the scan is not scoped to
-          # this run's ref.
-          #
-          # `gitleaks git` runs `git log -p -U0 <log-opts>` and, given no
-          # --log-opts, defaults those options to `--full-history --all`.
-          # `--all` means every ref in the repository — and the checkout above
-          # uses fetch-depth: 0, which fetches every branch. A PR therefore
-          # failed on secrets committed to somebody else's unmerged branch,
-          # which the PR author cannot fix and which no exception can durably
-          # suppress: the fingerprint contains a commit SHA, so it changes the
-          # moment that branch is squash-merged and the same content then
-          # reappears on the default branch under a new fingerprint.
-          #
-          # Replacing the default with `--full-history HEAD` scopes the scan to
-          # commits reachable from this run's ref, which is what a gate should
-          # depend on:
-          #   pull_request -> the merge commit: base history + the PR's commits
-          #   push         -> the pushed branch
-          #   schedule     -> the default branch
-          #
-          # This is a narrowing of the ref set only, NOT a narrowing to the PR
-          # diff. Full history behind HEAD is still scanned, root commits
-          # included, so a secret committed and later deleted still fails the
-          # gate — verified against the pinned v8.30.1 binary.
-          gitleaks git . --redact --exit-code 1 --verbose \
-            --log-opts="--full-history HEAD" \
-            --gitleaks-ignore-path "$GITLEAKSIGNORE_PATH"
-
-  iac:
-    name: IaC (trivy config)
-    if: inputs.trivy-config-paths != ''
-    runs-on: ubuntu-latest
-    env:
-      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
-    steps:
-      - uses: actions/checkout@v6
-      - id: tooling-token
-        # secrets are not readable from a step `if`, so the job exposes the id as env.
-        if: env.TOOLING_APP_ID != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
-          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
-          owner: Gradient-DS
-          repositories: security-ci
-
-      - uses: actions/checkout@v6
-        with:
-          repository: Gradient-DS/security-ci
-          token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ env.TOOLING_PATH }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: pip install pyyaml
-      - name: Generate ignore file from exceptions
-        id: trivyignore
-        env:
-          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
-          TOOLING: ${{ env.TOOLING_PATH }}
-          # Written outside the workspace: `.trivyignore` at the repo root would
-          # silently overwrite a caller-owned file of that name.
-          TRIVYIGNORE_BASE: ${{ runner.temp }}/security-exceptions.trivyignore
-        run: |
-          # The helper chooses the file FORMAT and therefore the file NAME:
-          # trivy's plain one-id-per-line format at $TRIVYIGNORE_BASE when no
-          # exception is path-scoped, and trivy's YAML format at
-          # "$TRIVYIGNORE_BASE.yaml" when one is -- trivy selects its parser by
-          # extension. It prints the path it wrote, and that is the only thing
-          # it prints, so capturing stdout is the contract.
-          FILE=$(python "$TOOLING/scripts/security_exceptions.py" \
-                   --file "$EXCEPTIONS_FILE" \
-                   --emit-trivyignore "$TRIVYIGNORE_BASE")
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
-
+      # ── IaC (trivy config) ────────────────────────────────────────────
       # `trivy config` takes exactly one target, but trivy-config-paths is
       # documented as space-separated and one repo needs four roots. The action
       # cannot be run a variable number of times, so install the same pinned
       # trivy the action would install (trivy-action@v0.36.0 ships v0.70.0) and
       # loop the CLI.
       - name: Install trivy
+        id: setup-trivy
+        if: inputs.trivy-config-paths != ''
+        continue-on-error: true
         uses: aquasecurity/setup-trivy@v0.3.1
         with:
           version: v0.70.0
           cache: true
 
-      - name: Run trivy config on each path
+      - name: IaC (trivy config)
+        id: trivy-config
+        if: inputs.trivy-config-paths != ''
+        continue-on-error: true
         env:
+          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
+          TOOLING: ${{ env.TOOLING_PATH }}
+          # Written outside the workspace: `.trivyignore` at the repo root would
+          # silently overwrite a caller-owned file of that name.
+          TRIVYIGNORE_BASE: ${{ runner.temp }}/security-exceptions.trivyignore
           # Unquoted expansion below is deliberate: word-splitting is wanted,
           # command substitution is not.
           TRIVY_CONFIG_PATHS: ${{ inputs.trivy-config-paths }}
-          # Whichever format the previous step emitted. Passed through env, not
-          # interpolated into the script text, like every other value here.
-          TRIVYIGNORE_PATH: ${{ steps.trivyignore.outputs.file }}
         run: |
           set -uo pipefail
+
+          # The helper chooses the file FORMAT and therefore the file NAME:
+          # trivy's plain one-id-per-line format at $TRIVYIGNORE_BASE when no
+          # exception is path-scoped, and trivy's YAML format at
+          # "$TRIVYIGNORE_BASE.yaml" when one is -- trivy selects its parser by
+          # extension. It prints the path it wrote, and that is the only thing
+          # it prints, so capturing stdout is the contract.
+          TRIVYIGNORE_PATH=$(python "$TOOLING/scripts/security_exceptions.py" \
+                               --file "$EXCEPTIONS_FILE" \
+                               --emit-trivyignore "$TRIVYIGNORE_BASE") || exit 1
 
           # Every path is scanned even after one fails, so a single run reports
           # every offending root; the accumulator makes sure a later clean path
@@ -477,9 +362,65 @@ jobs:
           done
           exit "$rc"
 
+      # ── Verdict ───────────────────────────────────────────────────────
+      - name: Fail if any scanner failed
+        id: verdict
+        if: always()
+        env:
+          # A scanner counts as failed unless every one of its steps ran and
+          # succeeded. An enabled scanner whose step was skipped (an earlier
+          # step of the job failed) fails too: a scan that did not run is not
+          # a clean scan.
+          EXCEPTIONS: ${{ steps.exceptions.outcome }}
+          GITLEAKS: ${{ steps.gitleaks.outcome }}
+          BANDIT: ${{ steps.bandit.outcome }}
+          BANDIT_ON: ${{ inputs.python-paths != '' }}
+          PIP_AUDIT: ${{ steps.pip-audit.outcome }}
+          SETUP_UV: ${{ steps.setup-uv.outcome }}
+          PIP_AUDIT_ON: ${{ inputs.python-requirements != '' || inputs.python-uv }}
+          NPM_AUDIT: ${{ steps.npm-audit.outcome }}
+          SETUP_NODE: ${{ steps.setup-node.outcome }}
+          NPM_AUDIT_ON: ${{ inputs.node-dirs != '' }}
+          TRIVY_CONFIG: ${{ steps.trivy-config.outcome }}
+          SETUP_TRIVY: ${{ steps.setup-trivy.outcome }}
+          TRIVY_CONFIG_ON: ${{ inputs.trivy-config-paths != '' }}
+          PYTHON_UV: ${{ inputs.python-uv }}
+        run: |
+          failed=()
+          report() { # name enabled outcome...
+            local name=$1 on=$2; shift 2
+            local verdict=success o
+            if [ "$on" != "true" ]; then
+              verdict=disabled
+            else
+              for o in "$@"; do [ "$o" = "success" ] || verdict="failure ($o)"; done
+            fi
+            echo "| $name | $verdict |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$name: $verdict"
+            case "$verdict" in success|disabled) ;; *) failed+=("$name") ;; esac
+          }
+          { echo "### Source scans"; echo; echo "| Scanner | Result |"; echo "| --- | --- |"; } >> "$GITHUB_STEP_SUMMARY"
+          report exceptions true "$EXCEPTIONS"
+          report gitleaks true "$GITLEAKS"
+          report bandit "$BANDIT_ON" "$BANDIT"
+          if [ "$PYTHON_UV" = "true" ]; then
+            report pip-audit "$PIP_AUDIT_ON" "$SETUP_UV" "$PIP_AUDIT"
+          else
+            report pip-audit "$PIP_AUDIT_ON" "$PIP_AUDIT"
+          fi
+          report npm-audit "$NPM_AUDIT_ON" "$SETUP_NODE" "$NPM_AUDIT"
+          report trivy-config "$TRIVY_CONFIG_ON" "$SETUP_TRIVY" "$TRIVY_CONFIG"
+
+          joined=$(IFS=,; echo "${failed[*]}")
+          echo "failed=$joined" >> "$GITHUB_OUTPUT"
+          if [ -n "$joined" ]; then
+            echo "::error::Failed scanners: $joined"
+            exit 1
+          fi
+
   notify-scheduled-failure:
     name: Notify on scheduled failure
-    needs: [exceptions, sast-python, sca-python, sca-node, secrets, iac]
+    needs: [scan]
     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     permissions:
@@ -513,7 +454,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          NEEDS_JSON: ${{ toJson(needs) }}
+          # The scanners that failed, as the scan job's verdict step named
+          # them; empty when the job died before reaching it.
+          FAILED_JOBS: ${{ needs.scan.outputs.failed }}
           TOOLING: .security-tooling
         run: |
           # pipefail: without it a failing `printf`/`gh` in the pipelines below
@@ -522,9 +465,7 @@ jobs:
           set -o pipefail
 
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          FAILED_JOBS=$(printf '%s' "$NEEDS_JSON" \
-            | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(",")')
-          export REPO_NAME FAILED_JOBS
+          export REPO_NAME
 
           python -c 'import os,sys; sys.path.insert(0,os.environ["TOOLING"]); from scripts.notify_scheduled_failure import issue_title; print(issue_title(os.environ["REPO_NAME"]),end="")' > /tmp/issue-title.txt
           python -c 'import os,sys; sys.path.insert(0,os.environ["TOOLING"]); from scripts.notify_scheduled_failure import issue_body; failed=[j for j in os.environ["FAILED_JOBS"].split(",") if j]; print(issue_body(os.environ["REPO_NAME"],os.environ["RUN_URL"],failed),end="")' > /tmp/issue-body.md
