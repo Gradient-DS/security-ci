@@ -66,6 +66,29 @@ on:
           calling job must allow `packages: read`.
         type: string
         default: ''
+      no-cache-filters:
+        description: >-
+          Newline- or comma-separated Dockerfile stage names to rebuild without
+          cache, passed to docker/build-push-action's `no-cache-filters`. Name
+          the stage that runs `apt-get upgrade` / `apk upgrade`, so the scanned
+          image carries today's OS packages even when the layers above it are
+          unchanged and cached. Replaces the date-valued `*_UPGRADE_EPOCH`
+          build-arg workaround. Every stage built after a filtered one is
+          rebuilt too when its base changes. Ignored with image-ref.
+        type: string
+        default: ''
+      notify-on-schedule-failure:
+        description: >-
+          On a `schedule` run whose scan fails, open (or comment on) one issue
+          per image, labelled `security` (created if missing), titled
+          `Scheduled image scan failing: <repo> / <image-name>`, naming the
+          image digest and the failed scanners. Off by default because it
+          needs the calling job to grant `issues: write` (and `contents: read`),
+          which v6 callers do not; a job without that grant would fail at the
+          issue step. The daily digest scan is the only drift detector for
+          published images, so a scheduled caller should turn this on.
+        type: boolean
+        default: false
       image-ref:
         description: >-
           A pushed image to scan instead of building one, as
@@ -116,6 +139,9 @@ jobs:
       packages: read
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+    outputs:
+      failed: ${{ steps.verdict.outputs.failed }}
+      image: ${{ steps.verdict.outputs.image }}
     steps:
       - name: Check the scan target
         env:
@@ -236,6 +262,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build image for scanning
+        id: build
         if: inputs.image-ref == ''
         uses: docker/build-push-action@v7
         with:
@@ -248,8 +275,10 @@ jobs:
           secrets: ${{ secrets.build-secrets }}
           cache-from: ${{ steps.cache.outputs.from }}
           cache-to: ${{ steps.cache.outputs.to }}
+          no-cache-filters: ${{ inputs.no-cache-filters }}
 
       - name: Trivy vulnerability scan
+        id: trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ inputs.image-ref || format('{0}:scan', inputs.image-name) }}
@@ -262,3 +291,96 @@ jobs:
           # torch/triton-sized images (reranker, web-fetch, agents-api):
           # three "context deadline exceeded" gate failures 2026-09-07/08.
           timeout: '20m'
+
+      - name: Name what failed
+        # Reports only; the job's result is already decided by the steps
+        # above. Read by notify-scheduled-failure.
+        id: verdict
+        if: always()
+        env:
+          EXCEPTIONS: ${{ steps.trivyignore.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          BUILD_ON: ${{ inputs.image-ref == '' }}
+          TRIVY: ${{ steps.trivy.outcome }}
+          IMAGE_REF: ${{ inputs.image-ref }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        run: |
+          failed=()
+          [ "$EXCEPTIONS" = "success" ] || failed+=("exceptions ($EXCEPTIONS)")
+          if [ "$BUILD_ON" = "true" ] && [ "$BUILD" != "success" ]; then failed+=("build ($BUILD)"); fi
+          [ "$TRIVY" = "success" ] || failed+=("trivy ($TRIVY)")
+          joined=$(IFS=,; echo "${failed[*]}")
+          echo "failed=$joined" >> "$GITHUB_OUTPUT"
+          if [ -n "$IMAGE_REF" ]; then
+            echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          elif [ -n "$IMAGE_ID" ]; then
+            echo "image=$IMAGE_NAME:scan built from this run's checkout, image id $IMAGE_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+  notify-scheduled-failure:
+    name: Notify on scheduled failure
+    needs: [scan]
+    if: >-
+      always()
+      && inputs.notify-on-schedule-failure
+      && github.event_name == 'schedule'
+      && (needs.scan.result == 'failure' || needs.scan.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No `permissions:` here on purpose: the job inherits the calling job's
+    # grant. Requesting `issues: write` would make every caller that does not
+    # grant it fail at startup, even with this input off.
+    env:
+      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+    steps:
+      - name: Resolve the tooling ref
+        id: tooling-ref
+        env:
+          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
+        run: |
+          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - id: tooling-token
+        if: env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SECURITY_CI_APP_ID }}
+          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+          owner: Gradient-DS
+          repositories: security-ci
+
+      - uses: actions/checkout@v6
+        with:
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
+          ref: ${{ steps.tooling-ref.outputs.ref }}
+          path: .security-tooling
+          persist-credentials: false
+
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE: ${{ needs.scan.outputs.image }}
+          FAILED: ${{ needs.scan.outputs.failed }}
+          TOOLING: .security-tooling
+        run: |
+          set -euo pipefail
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          export REPO_NAME
+          python3 -c 'import os,sys; sys.path.insert(0,os.environ["TOOLING"]); from scripts.notify_scheduled_failure import image_issue_title as t; print(t(os.environ["REPO_NAME"],os.environ["IMAGE_NAME"]),end="")' > "$RUNNER_TEMP/issue-title.txt"
+          python3 -c 'import os,sys; sys.path.insert(0,os.environ["TOOLING"]); from scripts.notify_scheduled_failure import image_issue_body as b; f=[s for s in os.environ["FAILED"].split(",") if s]; print(b(os.environ["REPO_NAME"],os.environ["IMAGE_NAME"],os.environ["IMAGE"],os.environ["RUN_URL"],f),end="")' > "$RUNNER_TEMP/issue-body.md"
+          TITLE=$(cat "$RUNNER_TEMP/issue-title.txt")
+          # Idempotent; without it the notifier dies on a repo with no `security` label.
+          gh label create security --color B60205 --description "Automated security scan findings" 2>/dev/null || true
+          # Exact title match: `gh issue list --search` is fuzzy.
+          EXISTING=$(gh issue list --state open --label security --limit 200 --json number,title | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file "$RUNNER_TEMP/issue-body.md"
+          else
+            gh issue create --title "$TITLE" --body-file "$RUNNER_TEMP/issue-body.md" --label security
+          fi

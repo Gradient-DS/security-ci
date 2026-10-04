@@ -47,6 +47,40 @@ on:
         type: string
         required: false
         default: ''
+      cache-scope:
+        description: >-
+          Turns on a cached build. Empty (the default) keeps the plain
+          `docker compose up --build` on the runner's docker driver, which has
+          no layer cache on a fresh runner. Set, the compose file's built
+          services are pre-built with `docker buildx bake` on a
+          docker-container builder, reading and writing the GitHub Actions
+          cache under `<cache-scope>-<service>`, loaded into docker, and the
+          stack comes up with `--no-build`. Build args, secrets, targets and
+          contexts still come from the compose file, so an epoch or upgrade
+          build arg keeps forcing what it forced before. On a public
+          repository the GHA cache of the default branch is readable by fork
+          pull requests: do not cache a stage that holds private content.
+        type: string
+        required: false
+        default: ''
+      cache-write:
+        description: >-
+          With cache-scope: write the layers back (mode=max). Turn it off for a
+          repository whose GHA cache is over its limit and that reads a
+          registry cache through cache-from instead.
+        type: boolean
+        required: false
+        default: true
+      cache-from:
+        description: >-
+          Newline-separated extra BuildKit cache sources for every built
+          service, e.g. `type=registry,ref=ghcr.io/org/app:buildcache`. Turns
+          on the cached build like cache-scope; read-only. A source for
+          another image is a harmless miss. A ghcr.io source is read with this
+          run's GITHUB_TOKEN, so the calling job must allow `packages: read`.
+        type: string
+        required: false
+        default: ''
       timeout-minutes:
         description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
         type: number
@@ -86,7 +120,13 @@ jobs:
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
+      # No persisted credentials in either checkout: both land inside the
+      # compose build context, and a stack whose Dockerfile does `COPY . .`
+      # would bake the token in .git/config into an image layer -- and, with
+      # a build cache, into the cache.
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Resolve the tooling ref
         id: tooling-ref
@@ -115,6 +155,7 @@ jobs:
           token: ${{ steps.tooling-token.outputs.token || github.token }}
           ref: ${{ steps.tooling-ref.outputs.ref }}
           path: ${{ env.TOOLING_PATH }}
+          persist-credentials: false
 
       - name: Point the shared rules at this repo's containers
         env:
@@ -137,6 +178,76 @@ jobs:
           PY
           cat .falco/ci-egress.yaml
 
+      - name: Plan the cached build
+        # Only with cache-scope or cache-from; otherwise `targets` stays empty
+        # and the stack is built by `compose up --build` exactly as before.
+        id: bake
+        if: inputs.cache-scope != '' || inputs.cache-from != ''
+        env:
+          COMPOSE_FILE_PATH: ${{ inputs.compose-file }}
+          CACHE_SCOPE: ${{ inputs.cache-scope }}
+          CACHE_WRITE: ${{ inputs.cache-write }}
+          CACHE_FROM: ${{ inputs.cache-from }}
+          OVERRIDE: ${{ runner.temp }}/runtime-security-bake.json
+        run: |
+          set -euo pipefail
+          docker compose -f "$COMPOSE_FILE_PATH" config --format json > "$RUNNER_TEMP/compose-config.json"
+          python3 - <<'PY'
+          import json, os
+          cfg = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "compose-config.json")))
+          scope = os.environ["CACHE_SCOPE"]
+          extra = [line.strip() for line in os.environ["CACHE_FROM"].splitlines() if line.strip()]
+          targets = {}
+          for name, svc in sorted(cfg["services"].items()):
+              if "build" not in svc:
+                  continue
+              # The tag compose looks for under --no-build: the service's image,
+              # else compose's default <project>-<service>.
+              tag = svc.get("image") or f"{cfg['name']}-{name}"
+              cache_from = ([f"type=gha,scope={scope}-{name}"] if scope else []) + extra
+              cache_to = ([f"type=gha,scope={scope}-{name},mode=max"]
+                          if scope and os.environ["CACHE_WRITE"] == "true" else [])
+              targets[name] = {"tags": [tag], "cache-from": cache_from, "cache-to": cache_to}
+              print(f"{name}: tag {tag}, cache-from {cache_from}, cache-to {cache_to}")
+          if not targets:
+              raise SystemExit("cache-scope/cache-from is set but the compose file builds no service")
+          json.dump({"target": targets}, open(os.environ["OVERRIDE"], "w"), indent=2)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"targets={','.join(targets)}\n")
+          PY
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.bake.outputs.targets != ''
+
+      - name: Log in to ghcr.io
+        if: steps.bake.outputs.targets != '' && contains(inputs.cache-from, 'ghcr.io')
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Pre-build the stack with cache
+        # Same GH_TOKEN, and same reason, as the uncached bring-up below: the
+        # compose file may read it as a BuildKit secret. A secret is not part
+        # of any cache key and is never written to the cache.
+        if: steps.bake.outputs.targets != ''
+        uses: docker/bake-action@v7
+        env:
+          GH_TOKEN: ${{ steps.tooling-token.outputs.token }}
+          # No build-record artifact: on a public repository it is downloadable
+          # by anyone, and the audit needs only the loaded images.
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          # The checked-out workspace, as compose would build it; not the Git
+          # context, which would skip whatever the compose file expects on disk.
+          source: .
+          files: |
+            ${{ inputs.compose-file }}
+            ${{ runner.temp }}/runtime-security-bake.json
+          targets: ${{ steps.bake.outputs.targets }}
+          load: true
+
       - name: Bring up the egress-denied stack
         # GH_TOKEN is the same read-only App token this job checked the tooling
         # out with. A caller whose stack bakes test tooling from the private
@@ -145,9 +256,17 @@ jobs:
         # network exists) reads it through a BuildKit secret in its own compose
         # file. Empty for a caller that passes no App secrets, which is what a
         # public dependency needs anyway.
+        if: steps.bake.outputs.targets == ''
         env:
           GH_TOKEN: ${{ steps.tooling-token.outputs.token }}
-        run: docker compose -f "${{ inputs.compose-file }}" up -d --build
+          COMPOSE_FILE_PATH: ${{ inputs.compose-file }}
+        run: docker compose -f "$COMPOSE_FILE_PATH" up -d --build
+
+      - name: Bring up the egress-denied stack (pre-built)
+        if: steps.bake.outputs.targets != ''
+        env:
+          COMPOSE_FILE_PATH: ${{ inputs.compose-file }}
+        run: docker compose -f "$COMPOSE_FILE_PATH" up -d --no-build
 
       - name: Wait for health
         run: |

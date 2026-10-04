@@ -18,6 +18,15 @@ run tested.
   tree — i.e. nothing else landed on the base in between (a strict
   "branch must be up to date" ruleset makes that the norm). Any other change
   to the base, however unrelated, is a miss and everything runs.
+- **Same-repository pull requests only.** `check` trusts a record only if
+  the run that uploaded it was a `pull_request` run whose head repository is
+  this repository (the run's `head_repository` and `repository`, and the
+  artifact's `head_repository_id` and `repository_id`, all agree). On a public
+  repository a fork PR runs its *own* copy of the workflow in this
+  repository's context and could upload a `tested-tree-*` artifact for any
+  tree; that record, and one from a push, schedule, dispatch or
+  `pull_request_target` run, is a miss. `record` uploads nothing in such runs
+  (`recorded=false`) rather than failing.
 - **Same workflow file.** `check` accepts a record only if it was uploaded by
   a run of the workflow file `check` itself runs in. Since that file is part of
   the tree, a hit means the same job definitions ran on the same inputs. Put
@@ -28,12 +37,18 @@ run tested.
   reports the advisories as of the PR run. Keep the weekly scheduled scan.
 - Records expire after `retention-days` (default 14). An expired record is a
   miss.
-- `check` fails (rather than answering `false`) when the API lookup errors.
+- `check` fails (rather than answering `false`) when an API lookup errors;
+  any other unexpected record shape is a miss.
+- The logic is `scripts/tested_tree.py`, tested in `tests/test_tested_tree.py`
+  with mocked API responses. Both actions run it with the runner's `python3`.
 
 ## Permissions
 
 - `record`: `contents: read` (it reads the commit through the API, so the job
   needs no checkout). Uploading the artifact needs no extra scope.
+  Gating the `record` job on
+  `github.event.pull_request.head.repo.full_name == github.repository` as well
+  saves a runner on fork PRs, but is no longer needed for safety.
 - `check`: `contents: read`, `actions: read`.
 
 ## Caller sketch
@@ -57,7 +72,7 @@ jobs:
       hit: ${{ steps.check.outputs.hit }}
     steps:
       - id: check
-        uses: Gradient-DS/security-ci/actions/tested-tree/check@<sha> # v6
+        uses: Gradient-DS/security-ci/actions/tested-tree/check@<sha> # v7
         with:
           workflow-key: tests
 
@@ -78,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: Gradient-DS/security-ci/actions/tested-tree/record@<sha> # v6
+      - uses: Gradient-DS/security-ci/actions/tested-tree/record@<sha> # v7
         with:
           workflow-key: tests
 ```
