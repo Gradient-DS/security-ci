@@ -166,6 +166,14 @@ a public repository included**. Do not write a cache there for a stage that
 holds private content (open-webui's `INSTALL_SECURITY_CI_DEPS` layer holds this
 repository's packages); use a read-only `cache-from` instead.
 
+## Upgrading from v7
+
+- The npm gate resolves a dependent's finding (a `via` that names a package)
+  to the high/critical advisories behind it. Excepting the advisory now covers
+  every package it propagates to, so package-name entries written for those
+  dependents (e.g. `kokoro-js`) can be deleted. A dependent whose chain reaches
+  no blocking advisory is still reported as `package:<name>`.
+
 ## Upgrading from v6
 
 Every v6 input keeps its meaning and default; the new inputs are off by default.
