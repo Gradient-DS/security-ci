@@ -135,9 +135,32 @@ def test_npm_unexcepted_handles_mixed_via_shapes():
         ]},
         "only-string-via": {"severity": "high", "via": ["lodash"]},
     }}
-    # A blocking entry that resolves to no advisory id must still be reported,
-    # by package key — dropping it would be a silent fail-open.
-    assert npm_unexcepted(audit, []) == ["GHSA-aaa", "package:only-string-via"]
+    # The string via resolves to lodash's advisory, reported once.
+    assert npm_unexcepted(audit, []) == ["GHSA-aaa"]
+
+
+def test_npm_unexcepted_inherited_finding_is_covered_by_the_source_advisory():
+    audit = {"vulnerabilities": {
+        "sharp": {"severity": "high", "via": [
+            {"url": "https://github.com/advisories/GHSA-aaa", "severity": "high"},
+        ]},
+        "onnx": {"severity": "moderate", "via": [
+            {"url": "https://github.com/advisories/GHSA-mod", "severity": "moderate"},
+        ]},
+        "@scope/lib": {"severity": "high", "via": ["onnx", "sharp"]},
+        "app": {"severity": "high", "via": ["@scope/lib"]},
+    }}
+    assert npm_unexcepted(audit, []) == ["GHSA-aaa"]
+    assert npm_unexcepted(audit, [_exc("GHSA-aaa", scanner="npm")]) == []
+
+
+def test_npm_unexcepted_inherited_chain_without_blocking_advisory_falls_back_to_package():
+    audit = {"vulnerabilities": {
+        "a": {"severity": "high", "via": ["b"]},
+        "b": {"severity": "high", "via": ["a"]},
+    }}
+    # A cycle with no advisory must not loop, and must still fail closed.
+    assert npm_unexcepted(audit, []) == ["package:a", "package:b"]
 
 
 def test_npm_unexcepted_reports_blocking_entry_with_unresolvable_via():
