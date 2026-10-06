@@ -384,6 +384,33 @@ def _advisory_ids(entry: dict) -> list[str]:
     return ids
 
 
+def _inherited_ids(vulns: dict, pkg: str, seen: set[str]) -> list[str]:
+    """Blocking advisory ids reached through string `via` entries.
+
+    npm audit marks a dependent as vulnerable, at its dependency's severity,
+    with the dependency's package name as the `via`. Resolving the chain maps
+    that finding to the advisories that cause it, so one exception covers the
+    advisory wherever it surfaces.
+    """
+    ids: list[str] = []
+    for via in (vulns.get(pkg) or {}).get("via", []):
+        if isinstance(via, str):
+            if via in seen:
+                continue
+            seen.add(via)
+            dep = vulns.get(via)
+            if not isinstance(dep, dict):
+                continue
+            for adv in dep.get("via", []):
+                if not (isinstance(adv, dict) and "url" in adv):
+                    continue
+                severity = adv.get("severity") or dep.get("severity", "")
+                if str(severity).lower() in NPM_BLOCKING_SEVERITIES:
+                    ids.append(adv["url"].rstrip("/").split("/")[-1])
+            ids.extend(_inherited_ids(vulns, via, seen))
+    return ids
+
+
 def npm_unexcepted(audit_json: dict, excs: list[SecurityException]) -> list[str]:
     """Blocking npm findings that no npm-scanner exception covers.
 
@@ -409,12 +436,13 @@ def npm_unexcepted(audit_json: dict, excs: list[SecurityException]) -> list[str]
 
     allowed = {e.id for e in excs if e.scanner == "npm"}
     found: list[str] = []
-    for pkg, entry in (audit_json.get("vulnerabilities") or {}).items():
+    vulns = audit_json.get("vulnerabilities") or {}
+    for pkg, entry in vulns.items():
         if not isinstance(entry, dict):
             continue
         if str(entry.get("severity", "")).lower() not in NPM_BLOCKING_SEVERITIES:
             continue
-        ids = _advisory_ids(entry)
+        ids = _advisory_ids(entry) + _inherited_ids(vulns, pkg, {pkg})
         # A blocking entry that resolves to no advisory id is still a blocking
         # entry: report it by its package key rather than dropping it.
         if not ids:
