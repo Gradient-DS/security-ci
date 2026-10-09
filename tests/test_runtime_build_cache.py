@@ -44,7 +44,7 @@ def test_default_path_is_the_v6_bring_up():
 def test_every_cached_build_step_is_gated():
     for step in _steps():
         uses = str(step.get("uses", ""))
-        if uses.startswith(("docker/setup-buildx-action", "docker/bake-action", "docker/login-action")):
+        if uses.startswith(("docker/setup-buildx-action", "docker/bake-action")):
             assert "steps.bake.outputs.targets != ''" in step["if"], uses
 
 

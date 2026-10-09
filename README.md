@@ -137,22 +137,56 @@ Both reusable scan workflows take `timeout-minutes` (source: 20) and a
 workflow was itself loaded from (`job.workflow_sha`), so the helpers always
 match the pinned workflow.
 
-## Runtime security build cache (v7)
+## Runtime security registry access and build cache
+
+Set `ghcr-login: true` when the caller's compose stack uses private GHCR
+images, whether or not it builds with a cache. The workflow logs in with
+`github.actor` / `github.token` before Buildx setup, bake, or either compose
+bring-up path can pull an image.
+
+Add these settings to the existing calling job (keep its other `with:` inputs):
+
+```yaml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      ghcr-login: true
+```
+
+Each private package must also grant the **caller repository** Read under
+**Package settings → Manage Actions access**. For open-webui, add
+`Gradient-DS/open-webui` to `soev-api`, `soev-sync`, and `soev-agents-api`.
+This grants the calling repository's `GITHUB_TOKEN` access; the security-ci
+reader App token used for tooling checkout does not provide GHCR access.
+See GitHub's [package access instructions](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#github-actions-access-for-packages-scoped-to-organizations).
+
+The default `runtime-audit` job still restricts its token to `contents: read`.
+The opt-in `runtime-audit-ghcr` job inherits the caller's permissions, so use
+the narrow block above. Neither job requests `packages: read`: an explicit
+request in even a skipped job can reject a caller that does not grant it.
+Both jobs share one YAML-anchored step list to prevent drift. GitHub documents
+[permission inheritance and YAML anchors](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations).
+
+The legacy GHCR `cache-from` login trigger is unchanged with `ghcr-login`
+off, but its contents-only token cannot read private packages even if the
+caller grants `packages: read`. Enable `ghcr-login` for that case too.
 
 `runtime-security.yml` brings the stack up with `docker compose up --build` on
 the runner's docker driver, which has no layer cache on a fresh runner. Set
-either input below and the compose file's built services are pre-built with
+`cache-scope` or `cache-from` and the compose file's built services are pre-built with
 `docker buildx bake` on a docker-container builder, loaded into docker under the
 tag compose expects (`image:`, else `<project>-<service>`), and the stack comes
 up with `--no-build`. Build args, secrets, targets and contexts still come from
 the compose file, so an epoch or upgrade build arg forces exactly what it did.
-Both empty (the default) is the v6 job, unchanged.
+Both cache inputs empty (the default) keeps the plain build path.
 
 | Input | Default | Use |
 | --- | --- | --- |
+| `ghcr-login` | `false` | Log in before builds and pulls, with or without a cache. Requires `packages: read` on the calling job and the caller repo granted Read under each private package's Manage Actions access. |
 | `cache-scope` | `''` | GHA cache, read and written per service under `<cache-scope>-<service>`. |
 | `cache-write` | `true` | With `cache-scope`: write the layers back (`mode=max`). |
-| `cache-from` | `''` | Extra read-only sources for every built service, e.g. a `type=registry` ref. ghcr.io needs `packages: read`. |
+| `cache-from` | `''` | Extra read-only sources for every built service, e.g. a `type=registry` ref. Private ghcr.io sources need `ghcr-login: true`, `packages: read`, and package access as above. |
 
 The job checks the caller and this repository out (as `.security-tooling/`)
 and writes `.falco/` inside the build context, with `persist-credentials: false`
@@ -198,4 +232,4 @@ uv run pytest
 
 Covers the gate decision, the exception-file rules, the gitleaks scan scope,
 the scheduled-failure notifiers, tested-tree's trust rules (mocked API), the
-runtime build-cache plan and the three packages.
+runtime build-cache plan, GHCR login and permission routing, and the three packages.

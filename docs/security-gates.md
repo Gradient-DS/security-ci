@@ -55,6 +55,28 @@ Every clause is load-bearing.
   repo's `test-command` and report its exit status. What that command asserts
   is entirely up to that repo.
 
+## Private GHCR images
+
+`runtime-security.yml` accepts `ghcr-login` (boolean, default `false`) to
+authenticate with `github.actor` / `github.token` before cached builds or
+plain compose bring-up can pull private images. On the calling job, add:
+
+```yaml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      ghcr-login: true
+```
+
+Keep the caller's other inputs. Each package must grant the caller repository
+Read under **Package settings → Manage Actions access** (for OWUI, the repo
+is `Gradient-DS/open-webui`). This also applies to private GHCR `cache-from`
+sources. The opt-in job inherits the caller's grant; the default job keeps
+its existing `contents: read` restriction. The workflow cannot raise the
+caller's token permissions. See [registry access and build cache](../README.md#runtime-security-registry-access-and-build-cache)
+for the permission design and package setup.
+
 ## `enforce`
 
 `runtime-security.yml` takes an `enforce` input, default `false`. With it off
