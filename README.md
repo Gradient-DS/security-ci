@@ -113,8 +113,9 @@ The image job asks for `packages: read` (for `image-ref` and a ghcr.io
 `cache-from`). It is part of the restricted default token, so a caller only
 has to grant it if it narrows the calling job's `permissions:`.
 
-The notifier job requests no permissions of its own and inherits the calling
-job's: a reusable job that asks for `issues: write` makes every caller that does
+The source workflow takes the same `notify-on-schedule-failure` input (v9;
+before v9 its notifier always ran on a failed scheduled scan). Both notifier
+jobs request no permissions of their own and inherit the calling job's: a reusable job that asks for `issues: write` makes every caller that does
 not grant it fail at startup, input or no input. So a caller that turns it on
 grants it:
 

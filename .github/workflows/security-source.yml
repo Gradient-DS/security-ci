@@ -39,6 +39,13 @@ on:
         description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
         type: number
         default: 20
+      notify-on-schedule-failure:
+        description: >-
+          v9. On a failed `schedule` run, open or comment on a `security`-labelled
+          issue. Off by default, as in security-image.yml; a caller that turns it
+          on grants `issues: write` (and `contents: read`) on the calling job.
+        type: boolean
+        default: false
     secrets:
       git-token:
         description: >-
@@ -499,14 +506,16 @@ jobs:
   notify-scheduled-failure:
     name: Notify on scheduled failure
     needs: [scan]
-    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    if: >-
+      always()
+      && inputs.notify-on-schedule-failure
+      && github.event_name == 'schedule'
+      && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      # `issues: write` alone drops the implicit `contents: read`, which the two
-      # checkout steps below need.
-      contents: read
-      issues: write
+    # No `permissions:` here on purpose: the job inherits the calling job's
+    # grant. Requesting `issues: write` would make every caller that does not
+    # grant it fail at startup, even with this input off.
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
     steps:
