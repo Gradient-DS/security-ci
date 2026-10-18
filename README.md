@@ -156,6 +156,7 @@ Both empty (the default) is the v6 job, unchanged.
 | `cache-scope` | `''` | GHA cache, read and written per service under `<cache-scope>-<service>`. |
 | `cache-write` | `true` | With `cache-scope`: write the layers back (`mode=max`). |
 | `cache-from` | `''` | Extra read-only sources for every built service, e.g. a `type=registry` ref. ghcr.io needs `packages: read`. |
+| `runs-on` | `ubuntu-latest` | v10. Runner label for the job. A self-hosted runner must allow a privileged container: Falco loads `modern_ebpf` into the host kernel. |
 
 The job checks the caller and this repository out (as `.security-tooling/`)
 and writes `.falco/` inside the build context, with `persist-credentials: false`
