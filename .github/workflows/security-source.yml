@@ -39,6 +39,12 @@ on:
         description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
         type: number
         default: 20
+      runs-on:
+        description: >-
+          Runner label for every job in this workflow. Self-hosted runners
+          (e.g. soev-scw on scaleway-ci) must be restricted to private repos.
+        type: string
+        default: 'ubuntu-latest'
       notify-on-schedule-failure:
         description: >-
           v9. On a failed `schedule` run, open or comment on a `security`-labelled
@@ -82,7 +88,7 @@ jobs:
   # billed minute) of their own.
   scan:
     name: Source scans
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
@@ -511,7 +517,7 @@ jobs:
       && inputs.notify-on-schedule-failure
       && github.event_name == 'schedule'
       && contains(needs.*.result, 'failure')
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 10
     # No `permissions:` here on purpose: the job inherits the calling job's
     # grant. Requesting `issues: write` would make every caller that does not
