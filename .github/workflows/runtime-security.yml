@@ -115,7 +115,10 @@ on:
 
 env:
   TOOLING_PATH: .security-tooling
-  FALCO_EVENTS: /tmp/falco_events.json
+  # In the workspace, not /tmp: on a Docker-in-Docker runner the Falco
+  # container's /tmp is the dind sidecar's, which the job steps never see.
+  # The workspace is shared by both on every runner type.
+  FALCO_EVENTS: ${{ github.workspace }}/.falco/falco_events.json
 
 jobs:
   runtime-audit:
@@ -326,7 +329,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name falco --privileged \
-            -v /tmp:/tmp \
+            -v "${{ github.workspace }}/.falco:${{ github.workspace }}/.falco" \
             -v /var/run/docker.sock:/host/var/run/docker.sock \
             -v /proc:/host/proc:ro \
             -v "${{ github.workspace }}/.falco/ci-egress.yaml:/etc/falco/rules.d/custom_rules.yaml:ro" \
@@ -478,7 +481,7 @@ jobs:
         with:
           name: runtime-security-reports
           path: |
-            /tmp/falco_events.json
+            ${{ env.FALCO_EVENTS }}
             /tmp/falco-container.log
             /tmp/app-logs/
           if-no-files-found: warn
