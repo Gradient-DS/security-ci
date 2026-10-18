@@ -108,6 +108,7 @@ from a workflow problem.
 | `no-cache-filters` | `''` | v7. Stages rebuilt without cache (build-push-action `no-cache-filters`). Name the stage that runs `apt-get upgrade` / `apk upgrade`; replaces the date-valued `*_UPGRADE_EPOCH` build arg. |
 | `notify-on-schedule-failure` | `false` | v7. On a failed `schedule` run, open or comment on one `security`-labelled issue per image (`Scheduled image scan failing: <repo> / <image-name>`) naming the digest and failed scanners. Needs `issues: write` on the calling job. |
 | `timeout-minutes` | `40` | Job timeout (Trivy alone may take 20). |
+| `runs-on` | `ubuntu-latest` | v9. Runner label for every job. A self-hosted label must belong to a runner group limited to private repos. With `maximize-build-space`, the cleanup runs only on GitHub-hosted runners. |
 
 The image job asks for `packages: read` (for `image-ref` and a ghcr.io
 `cache-from`). It is part of the restricted default token, so a caller only
@@ -133,7 +134,8 @@ grants it:
       notify-on-schedule-failure: true
 ```
 
-Both reusable scan workflows take `timeout-minutes` (source: 20) and a
+Both reusable scan workflows take `runs-on` (default `ubuntu-latest`),
+`timeout-minutes` (source: 20) and a
 `tooling-ref` that is empty by default, meaning the commit the reusable
 workflow was itself loaded from (`job.workflow_sha`), so the helpers always
 match the pinned workflow.

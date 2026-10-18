@@ -34,6 +34,12 @@ on:
         description: 'Job timeout. A hung scanner otherwise holds a runner for 6 hours.'
         type: number
         default: 40
+      runs-on:
+        description: >-
+          Runner label for every job in this workflow. Self-hosted runners
+          (e.g. soev-scw on scaleway-ci) must be restricted to private repos.
+        type: string
+        default: 'ubuntu-latest'
       maximize-build-space:
         description: >-
           Free ~30 GB of runner disk (Android SDK, GHC, CodeQL) before the
@@ -128,7 +134,7 @@ on:
 jobs:
   scan:
     name: Container Scan (Trivy)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     # Least privilege: this job builds a PR-authored Dockerfile, so the token
     # may only read: the sources being scanned, and ghcr.io packages for a
@@ -213,7 +219,8 @@ jobs:
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       - name: Maximize build space
-        if: inputs.maximize-build-space
+        # Self-hosted runners have no preinstalled SDKs to remove.
+        if: inputs.maximize-build-space && runner.environment == 'github-hosted'
         # SHA-pinned, not tag-pinned: this is the suite's only non-mainstream
         # third-party action and a mutable tag would let a retag execute
         # arbitrary code inside a security gate across nine repos.
@@ -326,7 +333,7 @@ jobs:
       && inputs.notify-on-schedule-failure
       && github.event_name == 'schedule'
       && (needs.scan.result == 'failure' || needs.scan.result == 'cancelled')
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 10
     # No `permissions:` here on purpose: the job inherits the calling job's
     # grant. Requesting `issues: write` would make every caller that does not
