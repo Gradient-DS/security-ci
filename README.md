@@ -16,7 +16,7 @@ else.
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, pip-audit, npm audit and trivy config, plus the exception-file gate, as steps of one `Source scans` job |
+| `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, Semgrep (opt-in), pip-audit, npm audit and trivy config, plus the exception-file gate, as steps of one `Source scans` job |
 | `.github/workflows/security-image.yml` | Reusable: Trivy image scan, of an image it builds or of a pushed digest (`image-ref`) |
 | `.github/workflows/runtime-security.yml` | Reusable: brings up a caller's stack under Falco, drives its traffic, gates on egress and sensitive reads |
 | `.github/workflows/tooling-token-smoke.yml` | Diagnostic: proves the org App can read this repository |
@@ -140,6 +140,45 @@ Both reusable scan workflows take `runs-on` (default `ubuntu-latest`),
 workflow was itself loaded from (`job.workflow_sha`), so the helpers always
 match the pinned workflow.
 
+## Source scan Semgrep (v11)
+
+Opt-in SAST beside Bandit. Both inputs are new; with `semgrep-configs` empty
+(the default) the step does not run and the verdict reports it `disabled`.
+
+| Input | Default | Use |
+| --- | --- | --- |
+| `semgrep-configs` | `''` | Space-separated configs, each a `--config`: registry rulesets (`p/python p/owasp-top-ten p/secrets`) or rule files in the caller's repo. Empty disables the scanner. |
+| `semgrep-paths` | `.` | Space-separated dirs to scan, relative to the repo root. |
+
+Semgrep is pinned (`semgrep==1.181.0`, from PyPI into a throwaway venv) and
+runs with `--metrics=off`. It blocks on findings of severity `WARNING` and
+`ERROR`; `INFO` is advisory. `WARNING` blocks because the registry files much
+of its OWASP coverage there (weak hashes, unverified TLS). Registry rules are
+fetched at run time, so a ruleset update can fail a run with no change on
+either side. `tests`, `.venv`, `node_modules`, `dist`, `.worktrees` and `.wt-*`
+are excluded, as for Bandit.
+
+Waivers go through the exception file only. `# nosemgrep` comments and
+`.semgrepignore` files are ignored (`--disable-nosem`,
+`--x-ignore-semgrepignore-files`). A `scanner: semgrep` entry's `id` is the
+rule id from the finding. Without `paths` the rule is excluded from the whole
+scan (`--exclude-rule`), which also waives every future instance of that bug
+class. With `paths` (repository-relative files, no globs) only that rule in
+those files is waived:
+
+```yaml
+exceptions:
+  - id: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
+    package: ops scripts
+    scanner: semgrep
+    paths: [scripts/rotate.py]
+    reason: The command is a fixed literal; no input reaches it.
+    replacement_considered: An argv list loses the pipeline the script needs.
+    usage_analysis: Called once at startup with a constant string.
+    approved_by: "@reviewer"
+    recheck: 2027-01-15
+```
+
 ## Runtime security build cache (v7)
 
 `runtime-security.yml` brings the stack up with `docker compose up --build` on
@@ -169,6 +208,46 @@ the default branch's is readable by every pull request, **fork pull requests on
 a public repository included**. Do not write a cache there for a stage that
 holds private content (open-webui's `INSTALL_SECURITY_CI_DEPS` layer holds this
 repository's packages); use a read-only `cache-from` instead.
+
+## Runtime security build token (v11)
+
+`GH_TOKEN` is the security-ci reader App's token and reads this repository
+only. A stack whose image installs the caller's *own* private dependencies
+(`git+https://github.com/Gradient-DS/<private-repo>`) passes a read token for
+them as the optional secret `BUILD_TOKEN` (default empty: nothing changes). It is
+exported as env `BUILD_TOKEN` to the image build only, the bake step or the
+uncached `docker compose up --build`, never to the traffic driver or Falco.
+
+```yaml
+  runtime:
+    uses: Gradient-DS/security-ci/.github/workflows/runtime-security.yml@<sha> # v11
+    secrets:
+      SECURITY_CI_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+      SECURITY_CI_APP_PRIVATE_KEY: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+      BUILD_TOKEN: ${{ secrets.SOME_READ_TOKEN }}
+```
+
+The compose file reads it as a BuildKit secret, never a build arg (an arg is
+recorded in the image history):
+
+```yaml
+services:
+  app:
+    build:
+      context: .
+      secrets: [github_token]
+secrets:
+  github_token:
+    environment: BUILD_TOKEN
+```
+
+and the Dockerfile mounts it for the one `RUN` that needs it
+(`RUN --mount=type=secret,id=github_token ...`). The secret itself never enters
+a layer or the cache, but the layer that used it holds the private code it
+fetched. On a **public** repository the default branch's GHA cache is readable
+by fork pull requests, so do not combine `BUILD_TOKEN` with `cache-scope` there.
+With `secrets: inherit`, a caller that already has a secret named `BUILD_TOKEN`
+now has it exported to the build; it is inert unless the compose file reads it.
 
 ## Upgrading from v7
 
@@ -201,5 +280,6 @@ uv run pytest
 ```
 
 Covers the gate decision, the exception-file rules, the gitleaks scan scope,
-the scheduled-failure notifiers, tested-tree's trust rules (mocked API), the
-runtime build-cache plan and the three packages.
+the Semgrep and runtime build-token wiring, the scheduled-failure notifiers,
+tested-tree's trust rules (mocked API), the runtime build-cache plan and the
+three packages.
