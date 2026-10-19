@@ -170,6 +170,46 @@ a public repository included**. Do not write a cache there for a stage that
 holds private content (open-webui's `INSTALL_SECURITY_CI_DEPS` layer holds this
 repository's packages); use a read-only `cache-from` instead.
 
+## Runtime security build token (v11)
+
+`GH_TOKEN` is the security-ci reader App's token and reads this repository
+only. A stack whose image installs the caller's *own* private dependencies
+(`git+https://github.com/Gradient-DS/<private-repo>`) passes a read token for
+them as the optional secret `BUILD_TOKEN` (default empty: nothing changes). It is
+exported as env `BUILD_TOKEN` to the image build only, the bake step or the
+uncached `docker compose up --build`, never to the traffic driver or Falco.
+
+```yaml
+  runtime:
+    uses: Gradient-DS/security-ci/.github/workflows/runtime-security.yml@<sha> # v11
+    secrets:
+      SECURITY_CI_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+      SECURITY_CI_APP_PRIVATE_KEY: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+      BUILD_TOKEN: ${{ secrets.SOME_READ_TOKEN }}
+```
+
+The compose file reads it as a BuildKit secret, never a build arg (an arg is
+recorded in the image history):
+
+```yaml
+services:
+  app:
+    build:
+      context: .
+      secrets: [github_token]
+secrets:
+  github_token:
+    environment: BUILD_TOKEN
+```
+
+and the Dockerfile mounts it for the one `RUN` that needs it
+(`RUN --mount=type=secret,id=github_token ...`). The secret itself never enters
+a layer or the cache, but the layer that used it holds the private code it
+fetched. On a **public** repository the default branch's GHA cache is readable
+by fork pull requests, so do not combine `BUILD_TOKEN` with `cache-scope` there.
+With `secrets: inherit`, a caller that already has a secret named `BUILD_TOKEN`
+now has it exported to the build; it is inert unless the compose file reads it.
+
 ## Upgrading from v7
 
 - The npm gate resolves a dependent's finding (a `via` that names a package)

@@ -112,6 +112,23 @@ on:
       SECURITY_CI_APP_PRIVATE_KEY:
         description: 'Private key of the same App. Paired with SECURITY_CI_APP_ID.'
         required: false
+      BUILD_TOKEN:
+        description: >-
+          v11. Read token for the caller's own private build dependencies (a
+          Dockerfile that installs `git+https://github.com/<org>/<private-repo>`),
+          which the App token in GH_TOKEN cannot read: that App sees
+          Gradient-DS/security-ci and nothing else. Exported as BUILD_TOKEN to the
+          image build only -- the cached bake or the uncached `compose up --build`
+          -- and never to the traffic driver or Falco, because the build is the
+          one step that needs a network credential. The compose file reads it as
+          a BuildKit secret (`secrets: {github_token: {environment: BUILD_TOKEN}}`),
+          never as a build arg: an arg is written into the image history. A
+          BuildKit secret stays out of the cache key and the cache, but the layer
+          that used it holds the private code it fetched, so on a public
+          repository do not combine it with cache-scope (fork pull requests read
+          the default branch's GHA cache). Empty when not passed, which changes
+          nothing for a caller that does not use it.
+        required: false
 
 env:
   TOOLING_PATH: .security-tooling
@@ -238,13 +255,18 @@ jobs:
           password: ${{ github.token }}
 
       - name: Pre-build the stack with cache
-        # Same GH_TOKEN, and same reason, as the uncached bring-up below: the
-        # compose file may read it as a BuildKit secret. A secret is not part
-        # of any cache key and is never written to the cache.
+        # Same GH_TOKEN and BUILD_TOKEN, and same reason, as the uncached
+        # bring-up below: the compose file may read them as BuildKit secrets. A
+        # secret is not part of any cache key and is never written to the
+        # cache -- but what a RUN step fetched with it is, in that layer. A
+        # layer built with BUILD_TOKEN holds the caller's private code, and on
+        # a public repository the default branch's GHA cache is readable by
+        # fork pull requests, so such a stage must not be cached there.
         if: steps.bake.outputs.targets != ''
         uses: docker/bake-action@v7
         env:
           GH_TOKEN: ${{ steps.tooling-token.outputs.token }}
+          BUILD_TOKEN: ${{ secrets.BUILD_TOKEN }}
           # No build-record artifact: on a public repository it is downloadable
           # by anyone, and the audit needs only the loaded images.
           DOCKER_BUILD_RECORD_UPLOAD: 'false'
@@ -266,9 +288,16 @@ jobs:
         # network exists) reads it through a BuildKit secret in its own compose
         # file. Empty for a caller that passes no App secrets, which is what a
         # public dependency needs anyway.
+        #
+        # BUILD_TOKEN (v11) is the caller's own read token for ITS private build
+        # dependencies, which the App token above cannot read. Same BuildKit
+        # secret route, and exported to the two build steps only: the traffic
+        # driver and Falco run with neither token, so nothing the guarded
+        # containers or the test command do can reach a credential.
         if: steps.bake.outputs.targets == ''
         env:
           GH_TOKEN: ${{ steps.tooling-token.outputs.token }}
+          BUILD_TOKEN: ${{ secrets.BUILD_TOKEN }}
           COMPOSE_FILE_PATH: ${{ inputs.compose-file }}
         run: docker compose -f "$COMPOSE_FILE_PATH" up -d --build
 
