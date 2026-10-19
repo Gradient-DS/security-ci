@@ -49,8 +49,11 @@ Every clause is load-bearing.
   consuming repo's to assert.
 - **Business logic.** No tool here knows what the application is for.
 - **Anything static analysis already owns.** `security-source.yml` runs
-  gitleaks, Bandit, pip-audit and npm audit; `security-image.yml` runs Trivy.
-  Those are separate, and they are the ones that block by default.
+  gitleaks, Bandit, Semgrep (opt-in, `semgrep-configs`), pip-audit, npm audit
+  and trivy config; `security-image.yml` runs Trivy. Those are separate, and
+  they are the ones that block by default. Semgrep OSS follows taint within
+  one function, so it does not replace layer 2 for a sink inside a
+  third-party library.
 - **The application's own correctness.** These workflows run the consuming
   repo's `test-command` and report its exit status. What that command asserts
   is entirely up to that repo.

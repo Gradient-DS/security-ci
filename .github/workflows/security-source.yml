@@ -23,6 +23,21 @@ on:
         description: 'Space-separated dirs for `trivy config` (IaC). Empty disables the scanner.'
         type: string
         default: ''
+      semgrep-configs:
+        description: >-
+          v11. Space-separated Semgrep configs, each passed as `--config`: registry
+          rulesets (`p/python p/owasp-top-ten p/secrets`) or paths to rule files
+          in the caller's repo. Empty (the default) disables the scanner.
+          Registry rules are fetched at run time, so a ruleset update can fail a
+          run with no change on either side, as a new advisory does for pip-audit.
+        type: string
+        default: ''
+      semgrep-paths:
+        description: >-
+          v11. Space-separated dirs for Semgrep, relative to the repo root.
+          Ignored unless semgrep-configs is set.
+        type: string
+        default: '.'
       exceptions-file:
         description: 'Path to the per-repo exception file, relative to the caller repo root.'
         type: string
@@ -232,6 +247,89 @@ jobs:
           # shellcheck disable=SC2086
           bandit -r $PYTHON_PATHS -ll --confidence-level=medium \
             -x '*/node_modules/*,*/.venv/*,*/dist/*,*/.worktrees/*,*/.wt-*,*/tests/*'
+
+      # ── SAST (Semgrep) ────────────────────────────────────────────────
+      # Pinned semgrep from PyPI in a throwaway venv, not the official image:
+      # the wheel bundles the same semgrep-core binary, it needs no docker
+      # daemon on the runner (a self-hosted runner may not offer one to a
+      # source scan), it scans the checkout in place with no mount to keep in
+      # step with the paths the exception file names, and the venv keeps its
+      # ~60 dependencies out of the interpreter the helper scripts run in.
+      #
+      # Blocks on WARNING and ERROR, not ERROR alone: the registry rulesets
+      # file a good part of their OWASP findings (weak hashes, unverified TLS,
+      # unsafe deserialisation) at WARNING, so ERROR-only would let a caller
+      # opt into p/owasp-top-ten and get a fraction of it. INFO stays advisory.
+      #
+      # Every waiver goes through the exception file, like every other
+      # scanner here:
+      #   --disable-nosem                 an inline `# nosemgrep` would let a
+      #                                   PR waive its own finding, unreviewed.
+      #   --x-ignore-semgrepignore-files  same for a `.semgrepignore`, which
+      #                                   semgrep otherwise reads from the repo
+      #                                   root and which can drop whole trees.
+      #                                   An internal flag, so it is safe only
+      #                                   because the version is pinned; verified
+      #                                   against 1.181.0.
+      # The noise dirs are excluded on the command line instead, the same set
+      # Bandit excludes.
+      #
+      # An unscoped exception becomes `--exclude-rule=<id>`. A path-scoped one
+      # is waived file by file from the JSON report, so the helper, not
+      # semgrep's exit code, has the last word. Exit 0 (clean) and 1 (findings,
+      # --error) go to the helper; anything else is semgrep failing (a ruleset
+      # that did not load is 7, a missing path 2) and fails closed.
+      - name: SAST (Semgrep)
+        id: semgrep
+        if: inputs.semgrep-configs != ''
+        continue-on-error: true
+        env:
+          TOOLING: ${{ env.TOOLING_PATH }}
+          EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
+          SEMGREP_VERSION: '1.181.0'
+          # Unquoted expansion below is deliberate: word-splitting is wanted;
+          # `set -f` turns pathname expansion off, and command substitution
+          # never happens to an expansion result.
+          SEMGREP_CONFIGS: ${{ inputs.semgrep-configs }}
+          SEMGREP_PATHS: ${{ inputs.semgrep-paths }}
+          SEMGREP_JSON: ${{ runner.temp }}/semgrep.json
+          SEMGREP_VENV: ${{ runner.temp }}/semgrep-venv
+        run: |
+          set -uo pipefail
+          set -f
+
+          python -m venv "$SEMGREP_VENV" || exit 1
+          "$SEMGREP_VENV/bin/pip" install --quiet "semgrep==${SEMGREP_VERSION}" || exit 1
+          "$SEMGREP_VENV/bin/semgrep" --version || exit 1
+
+          EXCLUDE_RULES=$(python "$TOOLING/scripts/security_exceptions.py" \
+                            --file "$EXCEPTIONS_FILE" --emit-semgrep-args) || exit 1
+
+          CONFIG_ARGS=()
+          for c in $SEMGREP_CONFIGS; do CONFIG_ARGS+=(--config "$c"); done
+          if [ -z "${SEMGREP_PATHS// /}" ]; then
+            echo "::error::semgrep-paths is empty while semgrep-configs is set -- failing closed rather than scanning nothing"
+            exit 1
+          fi
+
+          rm -f "$SEMGREP_JSON"
+          rc=0
+          # shellcheck disable=SC2086
+          "$SEMGREP_VENV/bin/semgrep" scan "${CONFIG_ARGS[@]}" $EXCLUDE_RULES \
+            --severity WARNING --severity ERROR --error \
+            --metrics=off --disable-version-check \
+            --disable-nosem --x-ignore-semgrepignore-files \
+            --exclude node_modules --exclude .venv --exclude dist \
+            --exclude .worktrees --exclude '.wt-*' --exclude tests \
+            --json-output "$SEMGREP_JSON" \
+            $SEMGREP_PATHS || rc=$?
+          case "$rc" in
+            0|1) ;;
+            *) echo "::error::semgrep exited $rc -- the scan did not complete, failing closed"; exit 1 ;;
+          esac
+
+          python "$TOOLING/scripts/security_exceptions.py" \
+            --file "$EXCEPTIONS_FILE" --semgrep-json "$SEMGREP_JSON"
 
       # ── Python dependencies (pip-audit) ───────────────────────────────
       - name: Install uv
@@ -466,6 +564,8 @@ jobs:
           GITLEAKS: ${{ steps.gitleaks.outcome }}
           BANDIT: ${{ steps.bandit.outcome }}
           BANDIT_ON: ${{ inputs.python-paths != '' }}
+          SEMGREP: ${{ steps.semgrep.outcome }}
+          SEMGREP_ON: ${{ inputs.semgrep-configs != '' }}
           PIP_AUDIT: ${{ steps.pip-audit.outcome }}
           SETUP_UV: ${{ steps.setup-uv.outcome }}
           PIP_AUDIT_ON: ${{ inputs.python-requirements != '' || inputs.python-uv }}
@@ -494,6 +594,7 @@ jobs:
           report exceptions true "$EXCEPTIONS"
           report gitleaks true "$GITLEAKS"
           report bandit "$BANDIT_ON" "$BANDIT"
+          report semgrep "$SEMGREP_ON" "$SEMGREP"
           if [ "$PYTHON_UV" = "true" ]; then
             report pip-audit "$PIP_AUDIT_ON" "$SETUP_UV" "$PIP_AUDIT"
           else

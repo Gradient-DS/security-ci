@@ -16,7 +16,7 @@ else.
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, pip-audit, npm audit and trivy config, plus the exception-file gate, as steps of one `Source scans` job |
+| `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, Semgrep (opt-in), pip-audit, npm audit and trivy config, plus the exception-file gate, as steps of one `Source scans` job |
 | `.github/workflows/security-image.yml` | Reusable: Trivy image scan, of an image it builds or of a pushed digest (`image-ref`) |
 | `.github/workflows/runtime-security.yml` | Reusable: brings up a caller's stack under Falco, drives its traffic, gates on egress and sensitive reads |
 | `.github/workflows/tooling-token-smoke.yml` | Diagnostic: proves the org App can read this repository |
@@ -140,6 +140,45 @@ Both reusable scan workflows take `runs-on` (default `ubuntu-latest`),
 workflow was itself loaded from (`job.workflow_sha`), so the helpers always
 match the pinned workflow.
 
+## Source scan Semgrep (v11)
+
+Opt-in SAST beside Bandit. Both inputs are new; with `semgrep-configs` empty
+(the default) the step does not run and the verdict reports it `disabled`.
+
+| Input | Default | Use |
+| --- | --- | --- |
+| `semgrep-configs` | `''` | Space-separated configs, each a `--config`: registry rulesets (`p/python p/owasp-top-ten p/secrets`) or rule files in the caller's repo. Empty disables the scanner. |
+| `semgrep-paths` | `.` | Space-separated dirs to scan, relative to the repo root. |
+
+Semgrep is pinned (`semgrep==1.181.0`, from PyPI into a throwaway venv) and
+runs with `--metrics=off`. It blocks on findings of severity `WARNING` and
+`ERROR`; `INFO` is advisory. `WARNING` blocks because the registry files much
+of its OWASP coverage there (weak hashes, unverified TLS). Registry rules are
+fetched at run time, so a ruleset update can fail a run with no change on
+either side. `tests`, `.venv`, `node_modules`, `dist`, `.worktrees` and `.wt-*`
+are excluded, as for Bandit.
+
+Waivers go through the exception file only. `# nosemgrep` comments and
+`.semgrepignore` files are ignored (`--disable-nosem`,
+`--x-ignore-semgrepignore-files`). A `scanner: semgrep` entry's `id` is the
+rule id from the finding. Without `paths` the rule is excluded from the whole
+scan (`--exclude-rule`), which also waives every future instance of that bug
+class. With `paths` (repository-relative files, no globs) only that rule in
+those files is waived:
+
+```yaml
+exceptions:
+  - id: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
+    package: ops scripts
+    scanner: semgrep
+    paths: [scripts/rotate.py]
+    reason: The command is a fixed literal; no input reaches it.
+    replacement_considered: An argv list loses the pipeline the script needs.
+    usage_analysis: Called once at startup with a constant string.
+    approved_by: "@reviewer"
+    recheck: 2027-01-15
+```
+
 ## Runtime security build cache (v7)
 
 `runtime-security.yml` brings the stack up with `docker compose up --build` on
@@ -241,5 +280,6 @@ uv run pytest
 ```
 
 Covers the gate decision, the exception-file rules, the gitleaks scan scope,
-the scheduled-failure notifiers, tested-tree's trust rules (mocked API), the
-runtime build-cache plan and the three packages.
+the Semgrep and runtime build-token wiring, the scheduled-failure notifiers,
+tested-tree's trust rules (mocked API), the runtime build-cache plan and the
+three packages.
