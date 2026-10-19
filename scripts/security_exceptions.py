@@ -12,6 +12,12 @@ dangerous for an IaC check like "container runs privileged". With it, the
 suppression covers only the listed files and a new one still fails the build.
 Paths are relative to the trivy SCAN ROOT (the directory handed to
 `trivy config`, or the path inside the image), not to the repository root.
+A semgrep entry may carry `paths` too, and there they are relative to the
+repository root, which is where the workflow runs semgrep from. A scoped
+semgrep entry waives that rule in exactly those files; an unscoped one turns
+the rule off for the whole scan, which for SAST means every future instance
+of the bug class as well -- so scope SAST exceptions unless the rule itself is
+wrong for the repository.
 
 Grouping. A gitleaks entry may carry an `ids` list instead of a single `id`
 when ONE value produced several fingerprints (the same placeholder in five
@@ -43,7 +49,9 @@ REQUIRED_FIELDS: tuple[str, ...] = (
 # `ids` is the other optional field: a gitleaks-only alternative to `id` that
 # lets one justification cover every fingerprint the SAME value produced.
 OPTIONAL_FIELDS: tuple[str, ...] = ("paths", "ids")
-VALID_SCANNERS: tuple[str, ...] = ("pip-audit", "trivy", "npm", "gitleaks")
+VALID_SCANNERS: tuple[str, ...] = ("pip-audit", "trivy", "npm", "gitleaks", "semgrep")
+# The scanners whose findings carry a file path an exception can be scoped to.
+PATH_SCOPED_SCANNERS: tuple[str, ...] = ("trivy", "semgrep")
 NPM_BLOCKING_SEVERITIES = frozenset({"high", "critical"})
 
 # Exception ids are interpolated into scanner command lines and into
@@ -60,6 +68,17 @@ ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 # into $GITHUB_OUTPUT; it still forbids any whitespace, including newlines and
 # tabs, so an id can never inject an extra line into that file.
 GITLEAKS_ID_PATTERN = re.compile(r"^\S+$")
+
+# Semgrep ids are rule ids (`python.lang.security.audit.subprocess-shell-true.
+# subprocess-shell-true`, or a local rule's id). They become `--exclude-rule=`
+# arguments on the semgrep command line, word-split from an unquoted variable,
+# so they get ID_PATTERN's character set AND must start with a letter or
+# digit: an id beginning with '-' would read as one more semgrep option.
+SEMGREP_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# Semgrep severities the workflow blocks on (it passes the same two to
+# `--severity`). INFO is advisory in every registry ruleset.
+SEMGREP_BLOCKING_SEVERITIES = frozenset({"WARNING", "ERROR"})
 
 # Reported npm findings that carry no resolvable advisory id are labelled with
 # this prefix so a package name is never mistaken for an advisory id.
@@ -82,6 +101,10 @@ class ExceptionFileError(ValueError):
 
 class NpmAuditError(ValueError):
     """`npm audit` did not produce a usable report — the scan did not happen."""
+
+
+class SemgrepReportError(ValueError):
+    """Semgrep did not produce a usable JSON report — the scan did not happen."""
 
 
 @dataclass(frozen=True)
@@ -108,16 +131,20 @@ def _parse_paths(entry: dict, path: Path, index: int) -> tuple[str, ...]:
     path inside the image for `trivy image`. They are therefore NOT relative to
     the repository root: scanning `infrastructure/` reports
     `previder-prod/node-tuning/x.yaml`, not `infrastructure/previder-prod/...`.
+    Semgrep runs from the repository root and reports paths relative to it, so
+    a semgrep entry's paths are repository-relative.
     """
     raw = entry.get("paths")
     if raw is None:
         return ()
-    if entry["scanner"] != "trivy":
+    if entry["scanner"] not in PATH_SCOPED_SCANNERS:
         raise ExceptionFileError(
             f"{path}: entry {index} sets 'paths' with scanner "
-            f"{entry['scanner']!r}; only trivy supports path scoping. Leaving "
-            f"it here would read as scoped while suppressing tree-wide."
+            f"{entry['scanner']!r}; only trivy and semgrep support path "
+            f"scoping. Leaving it here would read as scoped while suppressing "
+            f"tree-wide."
         )
+    root = "trivy scan root" if entry["scanner"] == "trivy" else "repository root"
     if not isinstance(raw, list) or not raw:
         raise ExceptionFileError(
             f"{path}: entry {index} field 'paths' must be a non-empty list of "
@@ -147,7 +174,7 @@ def _parse_paths(entry: dict, path: Path, index: int) -> tuple[str, ...]:
         if value.startswith("/") or ".." in PurePosixPath(value).parts:
             raise ExceptionFileError(
                 f"{path}: entry {index} path {value!r} must be relative to the "
-                f"trivy scan root, with no '..' segments"
+                f"{root}, with no '..' segments"
             )
         out.append(value)
     return tuple(out)
@@ -230,6 +257,12 @@ def load(path: str | Path) -> list[SecurityException]:
         if entry["scanner"] == "gitleaks":
             id_pattern = GITLEAKS_ID_PATTERN
             id_pattern_desc = "no whitespace"
+        elif entry["scanner"] == "semgrep":
+            id_pattern = SEMGREP_ID_PATTERN
+            id_pattern_desc = (
+                "a semgrep rule id: letters, digits, dot, underscore, hyphen, "
+                "starting with a letter or digit"
+            )
         else:
             id_pattern = ID_PATTERN
             id_pattern_desc = "letters, digits, dot, underscore, hyphen"
@@ -271,6 +304,55 @@ def pip_audit_args(excs: list[SecurityException]) -> list[str]:
         if e.scanner == "pip-audit":
             args += ["--ignore-vuln", e.id]
     return args
+
+
+def semgrep_args(excs: list[SecurityException]) -> list[str]:
+    """`--exclude-rule=<id>` for every UNSCOPED semgrep exception.
+
+    One token per rule, `=`-joined, so the id can never be parsed as an option
+    of its own. A path-scoped entry is not here: excluding its rule would
+    waive it everywhere. Its findings are waived file by file afterwards, by
+    `semgrep_unexcepted`.
+    """
+    return [f"--exclude-rule={e.id}" for e in excs if e.scanner == "semgrep" and not e.paths]
+
+
+def _repo_relative(value: str) -> str:
+    """Normalise a reported path so `./src/a.py` and `src/a.py` compare equal."""
+    return PurePosixPath(value).as_posix().removeprefix("./")
+
+
+def semgrep_unexcepted(report: dict, excs: list[SecurityException]) -> list[str]:
+    """Blocking semgrep findings that no path-scoped exception covers.
+
+    Unscoped exceptions never reach here: their rules were excluded from the
+    scan. Raises SemgrepReportError when the report has no `results` list, so
+    a run that produced no report fails closed instead of reading as clean.
+    A finding below the blocking severities is not reported; the workflow's
+    `--severity` filter already drops those, this only keeps the function
+    honest when called on its own.
+    """
+    if not isinstance(report, dict) or not isinstance(report.get("results"), list):
+        raise SemgrepReportError(
+            "semgrep produced no 'results' list -- nothing was scanned, failing closed"
+        )
+    scoped = {
+        (e.id, p) for e in excs if e.scanner == "semgrep" for p in e.paths
+    }
+    found: list[str] = []
+    for result in report["results"]:
+        if not isinstance(result, dict):
+            continue
+        rule = str(result.get("check_id", ""))
+        severity = str((result.get("extra") or {}).get("severity", "")).upper()
+        if severity not in SEMGREP_BLOCKING_SEVERITIES:
+            continue
+        file = _repo_relative(str(result.get("path", "")))
+        if (rule, file) in scoped:
+            continue
+        line = (result.get("start") or {}).get("line", "?")
+        found.append(f"{rule} at {file}:{line}")
+    return found
 
 
 def trivyignore_text(excs: list[SecurityException]) -> str:
@@ -468,6 +550,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--emit-gitleaksignore")
     ap.add_argument("--check-expiry", action="store_true")
     ap.add_argument("--npm-audit-json")
+    # Prints the `--exclude-rule=` arguments for unscoped semgrep exceptions,
+    # space-separated on one line. Do not combine with another stdout emitter.
+    ap.add_argument("--emit-semgrep-args", action="store_true")
+    # Decides the semgrep gate from its --json-output report: non-zero when a
+    # blocking finding is not covered by a path-scoped exception.
+    ap.add_argument("--semgrep-json")
     args = ap.parse_args(argv)
 
     try:
@@ -496,6 +584,26 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.emit_gitleaksignore:
         Path(args.emit_gitleaksignore).write_text(gitleaksignore_text(excs))
+
+    if args.emit_semgrep_args:
+        print(" ".join(semgrep_args(excs)))
+
+    if args.semgrep_json:
+        try:
+            report = json.loads(Path(args.semgrep_json).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"::error::cannot read semgrep report {args.semgrep_json}: {exc}",
+                  file=sys.stderr)
+            return 1
+        try:
+            blocking = semgrep_unexcepted(report, excs)
+        except SemgrepReportError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+        for finding in blocking:
+            print(f"::error::semgrep finding {finding} has no exception.", file=sys.stderr)
+        if blocking:
+            return 1
 
     if args.npm_audit_json:
         try:

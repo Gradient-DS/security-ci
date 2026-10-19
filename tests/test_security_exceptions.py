@@ -388,7 +388,7 @@ def test_paths_on_a_non_trivy_scanner_is_rejected(tmp_path):
     while actually suppressing tree-wide — the worst possible failure mode for
     this field, so it is a hard error rather than a silent no-op."""
     text = _scoped().replace("scanner: trivy", "scanner: pip-audit")
-    with pytest.raises(ExceptionFileError, match="only trivy supports"):
+    with pytest.raises(ExceptionFileError, match="only trivy and semgrep support"):
         load(_write(tmp_path, text))
 
 
@@ -635,3 +635,163 @@ def test_empty_ids_is_rejected(tmp_path):
     )
     with pytest.raises(ExceptionFileError, match="non-empty"):
         load(_write(tmp_path, text))
+
+
+# --------------------------------------------------------------------------
+# Semgrep: rule ids, rule-wide exclusion, and per-file scoping.
+#
+# An unscoped semgrep exception becomes `--exclude-rule=<id>`, which turns the
+# rule off for the whole scan. A scoped one is not excluded at all; its
+# findings are waived file by file from semgrep's JSON report, so the same bug
+# class in a new file still fails.
+# --------------------------------------------------------------------------
+import json as _json
+
+from scripts.security_exceptions import (  # noqa: E402
+    SemgrepReportError, semgrep_args, semgrep_unexcepted,
+)
+
+SHELL_RULE = "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true"
+MD5_RULE = "python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5"
+
+SEMGREP_ENTRY = f"""
+version: 1
+exceptions:
+  - id: {SHELL_RULE}
+    package: ops-scripts
+    scanner: semgrep
+    reason: The command is a fixed literal; no input reaches it.
+    replacement_considered: An argv list loses the pipeline the script needs.
+    usage_analysis: Called once at startup with a constant string.
+    approved_by: "@some-reviewer"
+    recheck: 2026-12-01
+"""
+
+
+def _semgrep_scoped(paths=("src/ops/run.py",)):
+    block = "    paths:\n" + "".join(f'      - "{p}"\n' for p in paths)
+    return SEMGREP_ENTRY.replace("    recheck: 2026-12-01\n", "    recheck: 2026-12-01\n" + block)
+
+
+def _sx(id_, paths=()):
+    return SecurityException(
+        id=id_, package="pkg", scanner="semgrep", reason="r",
+        replacement_considered="rc", usage_analysis="ua",
+        approved_by="@r", recheck=dt.date(2026, 12, 1), paths=tuple(paths),
+    )
+
+
+def _result(rule, path, severity="ERROR", line=3):
+    return {"check_id": rule, "path": path, "start": {"line": line}, "extra": {"severity": severity}}
+
+
+def test_semgrep_rule_id_entry_is_accepted(tmp_path):
+    (exc,) = load(_write(tmp_path, SEMGREP_ENTRY))
+    assert exc.scanner == "semgrep" and exc.id == SHELL_RULE and exc.paths == ()
+
+
+@pytest.mark.parametrize("bad", [
+    "-rule", "--config=p/none", "rule id", "rule;id", "rule$(id)", "a/b", "a:b", "rule\n",
+])
+def test_semgrep_ids_outside_the_strict_pattern_are_rejected(tmp_path, bad):
+    # Ids are word-split into the semgrep command line: no option-shaped id,
+    # no whitespace, no shell or path characters.
+    text = SEMGREP_ENTRY.replace(f"id: {SHELL_RULE}", f"id: {_json.dumps(bad)}")
+    with pytest.raises(ExceptionFileError, match="invalid id"):
+        load(_write(tmp_path, text))
+
+
+def test_semgrep_paths_are_parsed_and_repo_relative(tmp_path):
+    (exc,) = load(_write(tmp_path, _semgrep_scoped(("src/a.py", "src/b.py"))))
+    assert exc.paths == ("src/a.py", "src/b.py")
+
+
+@pytest.mark.parametrize("bad", ["/src/a.py", "../a.py"])
+def test_semgrep_absolute_and_traversing_paths_are_rejected(tmp_path, bad):
+    with pytest.raises(ExceptionFileError, match="relative to the repository root"):
+        load(_write(tmp_path, _semgrep_scoped((bad,))))
+
+
+@pytest.mark.parametrize("bad", ["**", "src/*.py"])
+def test_semgrep_paths_with_globs_are_rejected(tmp_path, bad):
+    with pytest.raises(ExceptionFileError, match="glob metacharacter"):
+        load(_write(tmp_path, _semgrep_scoped((bad,))))
+
+
+def test_semgrep_ids_grouping_is_rejected(tmp_path):
+    text = SEMGREP_ENTRY.replace(f"  - id: {SHELL_RULE}\n", f"  - ids: [{SHELL_RULE}]\n")
+    with pytest.raises(ExceptionFileError, match="only gitleaks"):
+        load(_write(tmp_path, text))
+
+
+def test_semgrep_args_exclude_only_unscoped_semgrep_rules():
+    excs = [_sx("rule.a"), _sx("rule.b", paths=["src/x.py"]), _exc("PYSEC-1"), _exc("KSV017", scanner="trivy")]
+    assert semgrep_args(excs) == ["--exclude-rule=rule.a"]
+
+
+def test_semgrep_args_empty_without_semgrep_entries():
+    assert semgrep_args([_exc("PYSEC-1")]) == []
+
+
+def test_other_emitters_ignore_semgrep_entries():
+    excs = [_sx("rule.a"), _sx("rule.b", paths=["src/x.py"])]
+    assert pip_audit_args(excs) == []
+    assert "rule.a" not in trivyignore_text(excs)
+    assert "rule.b" not in trivyignore_yaml_text(excs)
+    assert "rule.a" not in gitleaksignore_text(excs)
+
+
+def test_semgrep_unexcepted_reports_every_unwaived_finding():
+    report = {"results": [_result(SHELL_RULE, "src/a.py"), _result(MD5_RULE, "src/b.py", "WARNING", 9)]}
+    assert semgrep_unexcepted(report, []) == [f"{SHELL_RULE} at src/a.py:3", f"{MD5_RULE} at src/b.py:9"]
+
+
+def test_semgrep_scoped_exception_waives_only_its_files():
+    report = {"results": [_result(SHELL_RULE, "src/ops/run.py"), _result(SHELL_RULE, "src/new.py")]}
+    excs = [_sx(SHELL_RULE, paths=["src/ops/run.py"])]
+    assert semgrep_unexcepted(report, excs) == [f"{SHELL_RULE} at src/new.py:3"]
+
+
+def test_semgrep_scoped_exception_waives_only_its_rule():
+    report = {"results": [_result(MD5_RULE, "src/ops/run.py")]}
+    excs = [_sx(SHELL_RULE, paths=["src/ops/run.py"])]
+    assert semgrep_unexcepted(report, excs) == [f"{MD5_RULE} at src/ops/run.py:3"]
+
+
+def test_semgrep_dot_slash_paths_match():
+    report = {"results": [_result(SHELL_RULE, "./src/ops/run.py")]}
+    assert semgrep_unexcepted(report, [_sx(SHELL_RULE, paths=["src/ops/run.py"])]) == []
+
+
+def test_semgrep_info_findings_do_not_block():
+    report = {"results": [_result(SHELL_RULE, "src/a.py", "INFO")]}
+    assert semgrep_unexcepted(report, []) == []
+
+
+@pytest.mark.parametrize("report", [{}, {"errors": []}, {"results": None}, []])
+def test_semgrep_report_without_results_fails_closed(report):
+    with pytest.raises(SemgrepReportError):
+        semgrep_unexcepted(report, [])
+
+
+def test_cli_semgrep_json_exit_codes(tmp_path, capsys):
+    exc_file = _write(tmp_path, _semgrep_scoped())
+    report = tmp_path / "semgrep.json"
+    report.write_text(_json.dumps({"results": [_result(SHELL_RULE, "src/ops/run.py")], "errors": []}))
+    assert main(["--file", str(exc_file), "--semgrep-json", str(report)]) == 0
+    report.write_text(_json.dumps({"results": [_result(SHELL_RULE, "src/other.py")]}))
+    assert main(["--file", str(exc_file), "--semgrep-json", str(report)]) == 1
+    assert "src/other.py:3" in capsys.readouterr().err
+    assert main(["--file", str(exc_file), "--semgrep-json", str(tmp_path / "missing.json")]) == 1
+    report.write_text("not json")
+    assert main(["--file", str(exc_file), "--semgrep-json", str(report)]) == 1
+
+
+def test_cli_emits_semgrep_args_on_one_line(tmp_path, capsys):
+    assert main(["--file", str(_write(tmp_path, SEMGREP_ENTRY)), "--emit-semgrep-args"]) == 0
+    assert capsys.readouterr().out == f"--exclude-rule={SHELL_RULE}\n"
+
+
+def test_cli_semgrep_args_empty_without_a_file(tmp_path, capsys):
+    assert main(["--file", str(tmp_path / "nope.yml"), "--emit-semgrep-args"]) == 0
+    assert capsys.readouterr().out == "\n"
