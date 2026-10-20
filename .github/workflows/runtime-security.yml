@@ -394,11 +394,25 @@ jobs:
         # none. Treating a missing file as a finding punished every clean run
         # instead. One deliberate connection from a throwaway container, whose
         # event is then required, is what actually separates the two.
+        #
+        # The container is started first and connects only once it is running:
+        # Falco learns a container's name from Docker asynchronously, and a
+        # connection made the instant the container starts can reach Falco
+        # before its name does, so the self-test rule (which matches on the
+        # name) misses it. It retries until the event is on file.
         run: |
           set -euo pipefail
-          docker run --rm --name falco-selftest alpine \
-            sh -c "wget -q -T2 -O- http://1.1.1.1 >/dev/null 2>&1 || true"
-          sleep 5
+          docker run -d --name falco-selftest alpine sleep 120 >/dev/null
+          sleep 3
+          for attempt in $(seq 1 10); do
+            docker exec falco-selftest sh -c "wget -q -T2 -O- http://1.1.1.1 >/dev/null 2>&1 || true"
+            sleep 3
+            if grep -qs '"rule":"Falco self-test egress"' "$FALCO_EVENTS"; then
+              echo "sensor reported the self-test connection (attempt $attempt)"
+              break
+            fi
+          done
+          docker rm -f falco-selftest >/dev/null
 
       - name: Drive traffic
         id: traffic
