@@ -1,0 +1,40 @@
+{
+  "name": "gitflow-promotion",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/test", "refs/heads/main"],
+      "exclude": []
+    },
+    "repository_property": {
+      "include": [
+        {"name": "tier", "source": "custom", "property_values": ["production"]},
+        {"name": "branch_model", "source": "custom", "property_values": ["gitflow"]}
+      ],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [{"actor_id": null, "actor_type": "OrganizationAdmin", "bypass_mode": "always"}],
+  "rules": [
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["merge"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": true,
+        "required_status_checks": [{"context": "promotion-guard", "integration_id": 15368}]
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "tier": {
+    "value_type": "single_select",
+    "required": true,
+    "default_value": "experiment",
+    "description": "production: org rulesets enforce and the nightly audit checks. development: audited, nothing blocks. experiment: free for all.",
+    "allowed_values": ["production", "development", "experiment"],
+    "values_editable_by": "org_actors"
+  },
+  "branch_model": {
+    "value_type": "single_select",
+    "required": true,
+    "default_value": "github-flow",
+    "description": "github-flow: main only. gitflow: dev (default) -> test -> main, promotions only.",
+    "allowed_values": ["github-flow", "gitflow"],
+    "values_editable_by": "org_actors"
+  }
+}

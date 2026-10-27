@@ -1,0 +1,11 @@
+{
+  "_comment": "Checks a production repo requires on its default branch on top of the org `gate`. Applied as one repo ruleset named `checks` holding only required_status_checks; anything else in a repo ruleset is drift.",
+  "open-webui": ["Backend Format (Ruff)", "Backend Unit Tests", "Frontend Build & Tests", "Helm Chart Validation", "lockfile-age", "runtime-gate"],
+  "soev-solutions": ["platform-tests", "ruff", "scan-filters", "soev-agents-api"],
+  "soev-saas": ["ci-gate"],
+  "AIRE": ["Build and Push Docker Images", "Frontend typecheck and unit tests", "Test API and Frontend", "runtime-gate"],
+  "soev": ["test (3.12)", "test (3.13)"],
+  "HIPE": ["test-backend", "test-frontend", "build-images"],
+  "warren": ["test"],
+  "soevai-website": ["lockfile-age"]
+}
