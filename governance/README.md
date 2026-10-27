@@ -11,6 +11,12 @@ properties decide what applies to a repo:
 | `branch_model` | `github-flow` (default) | `main` only. |
 | | `gitflow` | `dev` (default branch) → `test` → `main`. For production repos, org ruleset `gitflow-promotion` lets `test` and `main` take merge commits only and requires `promotion-guard`. |
 
+A third property, `source`, is `own` (default) or `upstream-mirror`: a mirror of
+someone else's project, such as the signalen repos. The audit skips the
+security-ci, `gate` and draft checks for a mirror, because they would only list
+upstream's code; tier rulesets still apply. A fork we develop ourselves, such as
+open-webui, stays `own`.
+
 A production repo may add checks of its own: `repo-checks.json` lists them, and
 they live in one repo ruleset named `checks` that holds nothing else. Every check
 is pinned to GitHub Actions (integration 15368). Only `OrganizationAdmin` can bypass.

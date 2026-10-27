@@ -149,6 +149,7 @@ class Repo:
     tier: str | None = None
     branch_model: str | None = None
     default_branch: str = "main"
+    source: str = "own"                                            # own | upstream-mirror
     branches: dict[str, bool] = field(default_factory=dict)        # dev/test/main -> exists
     workflows: dict[str, str] = field(default_factory=dict)        # path -> text
     gate: list[dict] | None = None                                 # check runs named gate
@@ -302,6 +303,10 @@ def audit_repo(repo: Repo, commit_dates: dict[str, dt.date | None], repo_checks:
         return out
     workflows, out_parse = parse_workflows(repo)
     out += check_branch_model(repo) + out_parse
+    if repo.source == "upstream-mirror":
+        # Someone else's code and CI: scanning it would only list upstream's
+        # findings. The branch model and rulesets still apply.
+        return out + (check_production_rules(repo, repo_checks) if repo.tier == "production" else [])
     if repo.name != SECURITY_CI:  # the scans live here; its own CI tests them in place
         out += check_security_ci(workflows, commit_dates, today)
     out += check_gate(repo)
@@ -442,7 +447,8 @@ class GitHub:
 
 def collect(gh: GitHub, meta: dict, props: dict[str, str]) -> Repo:
     name = meta["name"]
-    repo = Repo(name, props.get("tier"), props.get("branch_model"), meta["default_branch"])
+    repo = Repo(name, props.get("tier"), props.get("branch_model"), meta["default_branch"],
+                source=props.get("source") or "own")
     if repo.tier not in ("development", "production"):
         return repo
     base, branch = f"repos/{ORG}/{name}", repo.default_branch
