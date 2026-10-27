@@ -4,7 +4,11 @@
     "required": true,
     "default_value": "experiment",
     "description": "production: org rulesets enforce and the nightly audit checks. development: no deletion or force-push, audited. experiment: free for all.",
-    "allowed_values": ["production", "development", "experiment"],
+    "allowed_values": [
+      "production",
+      "development",
+      "experiment"
+    ],
     "values_editable_by": "org_actors"
   },
   "branch_model": {
@@ -12,7 +16,21 @@
     "required": true,
     "default_value": "github-flow",
     "description": "github-flow: main only. gitflow: dev (default) -> test -> main, promotions only.",
-    "allowed_values": ["github-flow", "gitflow"],
+    "allowed_values": [
+      "github-flow",
+      "gitflow"
+    ],
+    "values_editable_by": "org_actors"
+  },
+  "source": {
+    "value_type": "single_select",
+    "required": true,
+    "default_value": "own",
+    "description": "own: code we write; the security checks apply. upstream-mirror: a mirror of someone else's project; the audit skips the security-ci, gate and draft checks.",
+    "allowed_values": [
+      "own",
+      "upstream-mirror"
+    ],
     "values_editable_by": "org_actors"
   }
 }

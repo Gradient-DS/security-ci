@@ -258,3 +258,9 @@ def test_org_rulesets_read_through_a_repo_are_compared_on_the_rest():
 def test_template_projects_reach_security_ci_through_the_template():
     wf = {"jobs": {"security": {"uses": "Gradient-DS/soev-project-template/.github/workflows/project-security.yml@v0.3.1"}}}
     assert check_security_ci({"security.yml": wf}, {}, TODAY) == []
+
+
+def test_upstream_mirrors_skip_the_security_checks():
+    mirror = Repo("signalen-backend", "development", "github-flow", source="upstream-mirror")
+    assert audit_repo(mirror, {}, {}, TODAY) == []
+    assert "no workflow" in audit_repo(Repo("x", "development", "github-flow"), {}, {}, TODAY)[0]
