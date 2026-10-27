@@ -1,0 +1,20 @@
+{
+  "name": "development",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/test", "refs/heads/dev"],
+      "exclude": []
+    },
+    "repository_property": {
+      "include": [{"name": "tier", "source": "custom", "property_values": ["development"]}],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [{"actor_id": null, "actor_type": "OrganizationAdmin", "bypass_mode": "always"}],
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"}
+  ]
+}

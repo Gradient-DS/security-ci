@@ -6,7 +6,7 @@ properties decide what applies to a repo:
 | Property | Values | Effect |
 | --- | --- | --- |
 | `tier` | `production` | Org ruleset `production` on the default branch and `main`, `test`, `dev`: no deletion or force-push, a pull request with 1 approval (stale approvals dismissed), required check `gate`. Audited nightly. |
-| | `development` | No ruleset; audited nightly. |
+| | `development` | Org ruleset `development` on the same branches: no deletion or force-push. Nothing else blocks a merge; audited nightly. |
 | | `experiment` (default) | Nothing. |
 | `branch_model` | `github-flow` (default) | `main` only. |
 | | `gitflow` | `dev` (default branch) → `test` → `main`. For production repos, org ruleset `gitflow-promotion` lets `test` and `main` take merge commits only and requires `promotion-guard`. |
