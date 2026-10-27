@@ -296,7 +296,9 @@ def audit_repo(repo: Repo, commit_dates: dict[str, dt.date | None], repo_checks:
         return out
     workflows, out_parse = parse_workflows(repo)
     out += check_branch_model(repo) + out_parse
-    out += check_security_ci(workflows, commit_dates, today) + check_gate(repo)
+    if repo.name != SECURITY_CI:  # the scans live here; its own CI tests them in place
+        out += check_security_ci(workflows, commit_dates, today)
+    out += check_gate(repo)
     for path, wf in workflows.items():
         out += check_drafts(path, wf)
     out += check_exceptions(repo.exceptions_text, today)
@@ -340,6 +342,14 @@ def check_org_rulesets(expected: dict[str, dict], live: list[dict]) -> list[str]
         exp, got = _comparable(want), _comparable(have)
         exp["bypass_actors"] = [list(a) for a in exp["bypass_actors"]]
         got["bypass_actors"] = [list(a) for a in got["bypass_actors"]]
+        if "bypass_actors" not in have:
+            # GitHub returns bypass actors only to a token that may edit the
+            # ruleset; the audit App only reads, so it cannot compare them.
+            exp.pop("bypass_actors"), got.pop("bypass_actors")
+        if "repository_property" not in (have.get("conditions") or {}):
+            # Read through a repo, an org ruleset omits its repository
+            # condition; the per-repo rule checks cover which repos it hits.
+            exp["conditions"] = {k: v for k, v in (exp["conditions"] or {}).items() if k != "repository_property"}
         diffs = _diff(exp, got, name)
         if diffs:
             out.append(f"org ruleset `{name}` differs from governance/rulesets at {', '.join(diffs)}")
@@ -520,6 +530,23 @@ def token() -> str:
     return subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, check=True).stdout.strip()
 
 
+def org_rulesets(gh: GitHub, metas: list[dict]) -> list[dict]:
+    """Every org ruleset that applies to some repo, read through that repo.
+
+    `orgs/{org}/rulesets` needs organization administration write; a repo's own
+    listing with `includes_parents=true` shows the org rulesets that target it
+    with read access only. That view omits bypass actors and the repository
+    condition, and an org ruleset that targets no repo is not seen.
+    """
+    seen: dict[int, dict] = {}
+    for m in metas:
+        base = f"repos/{ORG}/{m['name']}/rulesets"
+        for rs in gh.paginate(f"{base}?includes_parents=true"):
+            if rs.get("source_type") == "Organization" and rs["id"] not in seen:
+                seen[rs["id"]] = gh.get(f"{base}/{rs['id']}?includes_parents=true")
+    return list(seen.values())
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="print findings; touch no issue")
@@ -539,8 +566,7 @@ def main(argv: list[str] | None = None) -> int:
 
     expected = {json.loads(p.read_text())["name"]: json.loads(p.read_text())
                 for p in sorted((ROOT / "rulesets").glob("*.json"))}
-    live = [gh.get(f"orgs/{ORG}/rulesets/{rs['id']}") for rs in gh.paginate(f"orgs/{ORG}/rulesets")]
-    org_findings = check_org_rulesets(expected, live)
+    org_findings = check_org_rulesets(expected, org_rulesets(gh, metas))
 
     text = summary(results, org_findings)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
