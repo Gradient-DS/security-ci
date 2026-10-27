@@ -48,3 +48,7 @@ def test_label_batches_skip_archive_and_respect_the_api_limit():
     batches = label_batches(labels)
     assert [len(repos) for _, repos in batches] == [BATCH, 5]
     assert all("old" not in repos for _, repos in batches)
+
+
+def test_development_only_blocks_deletion_and_force_push():
+    assert [r["type"] for r in rulesets()["development"]["rules"]] == ["deletion", "non_fast_forward"]

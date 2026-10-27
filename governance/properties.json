@@ -3,7 +3,7 @@
     "value_type": "single_select",
     "required": true,
     "default_value": "experiment",
-    "description": "production: org rulesets enforce and the nightly audit checks. development: audited, nothing blocks. experiment: free for all.",
+    "description": "production: org rulesets enforce and the nightly audit checks. development: no deletion or force-push, audited. experiment: free for all.",
     "allowed_values": ["production", "development", "experiment"],
     "values_editable_by": "org_actors"
   },
