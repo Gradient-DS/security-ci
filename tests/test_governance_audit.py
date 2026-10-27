@@ -196,6 +196,12 @@ def test_audit_repo_by_tier():
     assert audit_repo(dev, {PIN: TODAY}, {}, TODAY) == dev.errors
 
 
+def test_security_ci_need_not_call_itself():
+    gate = [{"status": "completed", "conclusion": "success"}]
+    assert audit_repo(Repo("security-ci", "development", "github-flow", gate=gate), {}, {}, TODAY) == []
+    assert "no workflow" in audit_repo(Repo("x", "development", "github-flow", gate=gate), {}, {}, TODAY)[0]
+
+
 # --- org rulesets ---
 
 def expected_rulesets():
@@ -237,3 +243,13 @@ def test_summary_lists_clean_development_repos_as_ready():
     text = summary(results, [])
     ready = text.split("## Ready for production")[1].split("##")[0]
     assert "- a" in ready and "- b" not in ready and "- c" not in ready
+
+
+def test_org_rulesets_read_through_a_repo_are_compared_on_the_rest():
+    expected = {p.stem: json.loads(p.read_text()) for p in (ROOT / "rulesets").glob("*.json")}
+    live = [{k: v for k, v in as_live(r).items() if k != "bypass_actors"} for r in expected.values()]
+    for rs in live:
+        rs["conditions"] = {"ref_name": rs["conditions"]["ref_name"]}
+    assert check_org_rulesets(expected, live) == []
+    live[0]["enforcement"] = "disabled"
+    assert any("enforcement" in f for f in check_org_rulesets(expected, live))
