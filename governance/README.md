@@ -31,3 +31,31 @@ for the first rollout:
 
 `labels.json` maps each repo to `{"tier": ..., "branch_model": ...}`; it is only
 needed for the first run. Afterwards the properties on GitHub are the record.
+
+## Audit
+
+`.github/workflows/governance-audit.yml` runs `scripts/governance_audit.py` every
+night at 03:17 UTC, and on demand (`dry-run` prints the findings and touches no
+issue). It checks every non-archived repo:
+
+| Tier | Checked |
+| --- | --- |
+| all | `tier` and `branch_model` are set. |
+| `development`, `production` | The branch model matches the branches (gitflow: default `dev`, `test` and `main` exist; github-flow: no `test`, default not `dev`). A workflow on the default branch calls a `security-ci` reusable workflow pinned to a commit SHA no older than 120 days. The latest `gate` on the default branch HEAD succeeded. Every `pull_request` workflow triggers on `ready_for_review`, and every job that could run on a draft carries `github.event.pull_request.draft != true`. No entry in `.github/security-exceptions.yml` is past its recheck date. |
+| `production` | The default branch requires `gate` (gitflow: `main` also requires `promotion-guard`). The only repo ruleset is `checks`, holding exactly the checks in `repo-checks.json`. No classic branch protection. |
+
+The org rulesets on GitHub must match `rulesets/*.json`, and no other org ruleset
+may exist. Ruleset bypasses on production repos in the last day are listed in
+the run summary for information.
+
+Findings go to one issue per repo, titled `Governance audit: <repo>` and labelled
+`governance`: opened or updated while there are findings, closed with a comment
+once the repo is clean. Org drift goes to `Governance audit: org` here. The run
+summary has a table per repo and a "Ready for production" list: development
+repos with no findings.
+
+The audit runs as the GitHub App `gradient-ds-governance-audit`, installed on all
+repositories with read access to Administration, Metadata, Contents, Checks and
+Actions, org Custom properties and org Administration, and read/write on Issues.
+Its id and private key are the secrets `GOVERNANCE_APP_ID` and
+`GOVERNANCE_APP_PRIVATE_KEY`.
