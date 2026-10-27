@@ -253,3 +253,8 @@ def test_org_rulesets_read_through_a_repo_are_compared_on_the_rest():
     assert check_org_rulesets(expected, live) == []
     live[0]["enforcement"] = "disabled"
     assert any("enforcement" in f for f in check_org_rulesets(expected, live))
+
+
+def test_template_projects_reach_security_ci_through_the_template():
+    wf = {"jobs": {"security": {"uses": "Gradient-DS/soev-project-template/.github/workflows/project-security.yml@v0.3.1"}}}
+    assert check_security_ci({"security.yml": wf}, {}, TODAY) == []

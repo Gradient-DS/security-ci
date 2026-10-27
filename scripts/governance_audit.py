@@ -39,6 +39,9 @@ TITLE_PREFIX = "Governance audit"
 MAX_PIN_AGE_DAYS = 120
 EXCEPTIONS_FILE = ".github/security-exceptions.yml"
 REUSABLE = re.compile(r"^Gradient-DS/security-ci/\.github/workflows/[^@]+\.ya?ml@(.+)$")
+# A project generated from soev-project-template calls its project-security.yml,
+# which calls security-ci at a pin the template keeps fresh.
+TEMPLATE_SECURITY = re.compile(r"^Gradient-DS/soev-project-template/\.github/workflows/project-security\.yml@\S+$")
 SHA = re.compile(r"[0-9a-f]{40}")
 TIERS = ("production", "development", "experiment")
 MODELS = ("github-flow", "gitflow")
@@ -213,6 +216,9 @@ def check_security_ci(workflows: dict[str, dict], commit_dates: dict[str, dt.dat
                       today: dt.date) -> list[str]:
     refs = security_ci_refs(workflows)
     if not refs:
+        if any(TEMPLATE_SECURITY.match(str((job or {}).get("uses") or ""))
+               for wf in workflows.values() for job in (wf.get("jobs") or {}).values()):
+            return []
         return ["no workflow on the default branch calls a `Gradient-DS/security-ci` reusable workflow"]
     out = []
     for path, ref in sorted(set(refs)):
