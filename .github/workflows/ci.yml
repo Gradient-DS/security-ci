@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   actionlint:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -16,6 +18,7 @@ jobs:
           ./actionlint -color
 
   pytest:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -53,3 +56,18 @@ jobs:
           gitleaks version
 
       - run: uv run pytest -v
+
+  # The required check: reports on every non-draft run, red unless both jobs passed.
+  gate:
+    needs: [actionlint, pytest]
+    if: ${{ always() && github.event.pull_request.draft != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          ACTIONLINT: ${{ needs.actionlint.result }}
+          PYTEST: ${{ needs.pytest.result }}
+        run: |
+          echo "actionlint: $ACTIONLINT, pytest: $PYTEST"
+          test "$ACTIONLINT" = success && test "$PYTEST" = success
