@@ -1,0 +1,14 @@
+name: Linear link
+description: >-
+  Fails a pull request whose description does not link a Linear ticket with a
+  magic word (`Fixes GRA-123`, `Part of GRA-123`). Bot PRs, promotions
+  (dev -> test, test -> main) and PRs labelled `no-ticket` pass. See README.md.
+runs:
+  using: composite
+  steps:
+    - name: Check the PR description
+      shell: bash
+      # The logic lives in scripts/linear_link.py, tested in
+      # tests/test_linear_link.py. It reads the event file, so the PR body
+      # never passes through an expression into the shell.
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/linear_link.py"

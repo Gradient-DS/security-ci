@@ -15,8 +15,11 @@ def required_checks(ruleset):
     return rule["parameters"]["required_status_checks"]
 
 
-def test_production_requires_gate_from_github_actions():
-    assert required_checks(rulesets()["production"]) == [{"context": "gate", "integration_id": GITHUB_ACTIONS}]
+def test_production_requires_gate_and_linear_link_from_github_actions():
+    assert required_checks(rulesets()["production"]) == [
+        {"context": "gate", "integration_id": GITHUB_ACTIONS},
+        {"context": "linear-link", "integration_id": GITHUB_ACTIONS},
+    ]
 
 
 def test_only_org_admins_bypass():
