@@ -2,7 +2,7 @@
 
 Every pull request in a Gradient-DS repository links at least one Linear ticket
 in its description. This action is the check; the `production` and `development`
-org rulesets require it as `linear-link`.
+org rulesets require it as `linear-link`, and `development` repos take changes only through a pull request.
 
 A link is a magic word plus a ticket id, anywhere in the body:
 
