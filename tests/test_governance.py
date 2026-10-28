@@ -15,8 +15,17 @@ def required_checks(ruleset):
     return rule["parameters"]["required_status_checks"]
 
 
-def test_production_requires_gate_from_github_actions():
-    assert required_checks(rulesets()["production"]) == [{"context": "gate", "integration_id": GITHUB_ACTIONS}]
+def test_production_requires_gate_and_linear_link_from_github_actions():
+    assert required_checks(rulesets()["production"]) == [
+        {"context": "gate", "integration_id": GITHUB_ACTIONS},
+        {"context": "linear-link", "integration_id": GITHUB_ACTIONS},
+    ]
+
+
+def test_development_is_pr_only_and_requires_linear_link():
+    rules = {r["type"]: r for r in rulesets()["development"]["rules"]}
+    assert rules["pull_request"]["parameters"]["required_approving_review_count"] == 0
+    assert required_checks(rulesets()["development"]) == [{"context": "linear-link", "integration_id": GITHUB_ACTIONS}]
 
 
 def test_only_org_admins_bypass():
@@ -50,5 +59,6 @@ def test_label_batches_skip_archive_and_respect_the_api_limit():
     assert all("old" not in repos for _, repos in batches)
 
 
-def test_development_only_blocks_deletion_and_force_push():
-    assert [r["type"] for r in rulesets()["development"]["rules"]] == ["deletion", "non_fast_forward"]
+def test_development_blocks_deletion_force_push_and_direct_push():
+    assert [r["type"] for r in rulesets()["development"]["rules"]] == [
+        "deletion", "non_fast_forward", "pull_request", "required_status_checks"]

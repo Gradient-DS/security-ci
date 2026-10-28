@@ -20,6 +20,8 @@ else.
 | `.github/workflows/security-image.yml` | Reusable: Trivy image scan, of an image it builds or of a pushed digest (`image-ref`) |
 | `.github/workflows/runtime-security.yml` | Reusable: brings up a caller's stack under Falco, drives its traffic, gates on egress and sensitive reads |
 | `.github/workflows/tooling-token-smoke.yml` | Diagnostic: proves the org App can read this repository |
+| `actions/linear-link` | Composite: fails a PR whose description links no Linear ticket (`Fixes GRA-123`, `Part of GRA-123`); required by the org rulesets ([README](actions/linear-link/README.md)) |
+| `scripts/linear_link.py` | The logic of linear-link: the magic words and the exemptions |
 | `actions/tested-tree/{record,check}` | Composite: reuse a passing run's result on a push of the exact same git tree ([README](actions/tested-tree/README.md)) |
 | `scripts/runtime_gate.py` | Decides the `runtime-gate` verdict. A skipped audit is never a pass |
 | `scripts/security_exceptions.py` | Validates per-repo exception files and their expiry |

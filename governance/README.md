@@ -5,8 +5,8 @@ properties decide what applies to a repo:
 
 | Property | Values | Effect |
 | --- | --- | --- |
-| `tier` | `production` | Org ruleset `production` on the default branch and `main`, `test`, `dev`: no deletion or force-push, a pull request with 1 approval (stale approvals dismissed), required check `gate`. Audited nightly. |
-| | `development` | Org ruleset `development` on the same branches: no deletion or force-push. Nothing else blocks a merge; audited nightly. |
+| `tier` | `production` | Org ruleset `production` on the default branch and `main`, `test`, `dev`: no deletion or force-push, a pull request with 1 approval (stale approvals dismissed), required checks `gate` and `linear-link` ([actions/linear-link](../actions/linear-link/README.md)). Audited nightly. |
+| | `development` | Org ruleset `development` on the same branches: no deletion or force-push, changes only through a pull request (no approval needed), required check `linear-link`; audited nightly. |
 | | `experiment` (default) | Nothing. |
 | `branch_model` | `github-flow` (default) | `main` only. |
 | | `gitflow` | `dev` (default branch) → `test` → `main`. For production repos, org ruleset `gitflow-promotion` lets `test` and `main` take merge commits only and requires `promotion-guard`. |
