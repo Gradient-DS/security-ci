@@ -9,7 +9,7 @@ A link is a magic word plus a ticket id, anywhere in the body:
 - `Fixes GRA-123` (also `Closes`, `Resolves`, `Completes`): this PR completes the ticket; Linear moves it to Done on merge.
 - `Part of GRA-123` (also `Refs`, `Related to`): the ticket needs more PRs; it links without closing.
 
-Passes without a link: bot PRs (dependabot, renovate), promotions (`dev` -> `test`,
+Passes without a link: PRs from forks (outside contributors to our open-source repos have no Linear access), bot PRs (dependabot, renovate), promotions (`dev` -> `test`,
 `test` -> `main`) and PRs labelled `no-ticket`, which a reviewer sees.
 
 ## Caller

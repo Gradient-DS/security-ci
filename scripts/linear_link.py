@@ -25,6 +25,9 @@ def verdict(pr: dict) -> tuple[bool, str]:
     user = pr.get("user") or {}
     if user.get("type") == "Bot" or str(user.get("login", "")).endswith("[bot]"):
         return True, f"bot pull request ({user.get('login')}): no ticket needed"
+    head_repo = (pr["head"].get("repo") or {}).get("full_name")
+    if head_repo != pr["base"]["repo"]["full_name"]:
+        return True, f"pull request from a fork ({head_repo or 'deleted'}): outside contributors have no ticket"
     if (pr["head"]["ref"], pr["base"]["ref"]) in PROMOTIONS:
         return True, f"promotion {pr['head']['ref']} -> {pr['base']['ref']}: no ticket needed"
     if any(label.get("name") == ESCAPE_LABEL for label in pr.get("labels") or []):
