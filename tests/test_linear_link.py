@@ -13,11 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _pr(body: str | None = "", *, head: str = "fix/thing", base: str = "dev",
-        login: str = "octo", user_type: str = "User", labels: tuple[str, ...] = ()) -> dict:
+        login: str = "octo", user_type: str = "User", labels: tuple[str, ...] = (),
+        head_repo: str | None = "Gradient-DS/x") -> dict:
     return {
         "body": body,
-        "head": {"ref": head},
-        "base": {"ref": base},
+        "head": {"ref": head, "repo": {"full_name": head_repo} if head_repo else None},
+        "base": {"ref": base, "repo": {"full_name": "Gradient-DS/x"}},
         "user": {"login": login, "type": user_type},
         "labels": [{"name": name} for name in labels],
     }
@@ -60,6 +61,8 @@ def test_missing_link_fails(body: str | None) -> None:
     _pr(head="dev", base="test"),
     _pr(head="test", base="main"),
     _pr(labels=("no-ticket",)),
+    _pr(head_repo="outsider/x"),
+    _pr(head_repo=None),
 ])
 def test_exemptions_pass(pr: dict) -> None:
     assert ll.verdict(pr)[0]
