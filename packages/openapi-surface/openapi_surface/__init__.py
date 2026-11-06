@@ -116,7 +116,8 @@ def _walk(schema: dict, doc: dict, prefix: str, seen: frozenset[int]) -> list[tu
 
 def writable_string_fields(openapi: dict) -> dict[str, list[str]]:
     """Map route ids, e.g. ``"POST /conversation/{conversation_id}"``, to the
-    dotted paths of their string fields."""
+    dotted paths of their string fields.
+    """
     result: dict[str, list[str]] = {}
     for path, operations in (openapi.get("paths") or {}).items():
         for method, operation in operations.items():

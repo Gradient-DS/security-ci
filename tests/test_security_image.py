@@ -44,7 +44,8 @@ def test_notifier_is_opt_in_and_schedule_only():
 def test_notifier_requests_no_permissions_of_its_own():
     """A reusable job asking for `issues: write` fails every caller that does
     not grant it at startup, whatever its `if` says: v6 callers grant only
-    contents/packages read."""
+    contents/packages read.
+    """
     assert "permissions" not in _wf()["jobs"]["notify-scheduled-failure"]
 
 

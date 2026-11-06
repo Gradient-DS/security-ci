@@ -1,5 +1,4 @@
 import pytest
-
 from openapi_surface import query_parameters
 
 

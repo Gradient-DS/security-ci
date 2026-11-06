@@ -16,7 +16,6 @@ constraint's rejection is still measured).
 """
 
 import pytest
-
 from openapi_surface import body_skeletons, constrained_string_fields
 
 

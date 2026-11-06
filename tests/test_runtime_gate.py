@@ -53,7 +53,8 @@ def test_skipped_on_a_relevant_change_fails():
 def test_the_nightly_run_is_never_path_filtered():
     """soev-solutions' Helm charts live in another repo, so its PR filter cannot
     see a chart change. The schedule is what covers that, which only holds if
-    `schedule` ignores relevance."""
+    `schedule` ignores relevance.
+    """
     passed, _ = decide(relevant="false", event="schedule", audit_result="skipped")
 
     assert passed is False
@@ -75,7 +76,8 @@ def test_cli_exit_codes():
 def test_unreported_relevance_never_passes(event, result):
     """Seen in the first real run: the `changes` job failed, so its output was
     the empty string. Unknown relevance is not "not relevant" -- treating it as
-    such would pass the gate precisely when the filter is broken."""
+    such would pass the gate precisely when the filter is broken.
+    """
     passed, reason = decide(relevant="", event=event, audit_result=result)
 
     assert passed is False

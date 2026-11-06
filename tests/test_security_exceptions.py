@@ -1,14 +1,16 @@
 import datetime as dt
 import pathlib
+
 import pytest
+
 from scripts.security_exceptions import (
     TRIVY_IGNORE_KINDS,
     ExceptionFileError,
     NpmAuditError,
     SecurityException,
-    load,
     expired,
     gitleaksignore_text,
+    load,
     main,
     npm_unexcepted,
     pip_audit_args,
@@ -235,7 +237,8 @@ def test_npm_unexcepted_severity_comparison_is_case_insensitive():
 def test_npm_unexcepted_rejects_error_shaped_report():
     """`npm audit` writes {"error": ...} on registry outage / ENOLOCK and still
     exits non-zero; the workflow's `|| true` swallows that, so an audit report
-    with no `vulnerabilities` key must fail closed, never read as clean."""
+    with no `vulnerabilities` key must fail closed, never read as clean.
+    """
     audit = {"error": {"code": "ENOLOCK", "summary": "no lockfile", "detail": "…"}}
     with pytest.raises(NpmAuditError, match="ENOLOCK"):
         npm_unexcepted(audit, [])
@@ -317,7 +320,8 @@ def test_gitleaks_entry_with_fingerprint_id_is_accepted(tmp_path):
 def test_gitleaks_fingerprint_id_is_rejected_for_pip_audit_scanner(tmp_path):
     """Proves the strict ID_PATTERN still applies to scanners other than
     gitleaks: a gitleaks-shaped id (colons, slashes) is not a valid pip-audit
-    id even though it would be fine for gitleaks itself."""
+    id even though it would be fine for gitleaks itself.
+    """
     text = VALID_ENTRY.replace("id: PYSEC-2026-3412", f"id: {GITLEAKS_FINGERPRINT}")
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
@@ -357,7 +361,8 @@ def test_gitleaksignore_text_lists_ids_with_comments():
 
 def test_gitleaksignore_text_excludes_other_scanners():
     """Negative isolation: exceptions for other scanners must never reach
-    the gitleaksignore file."""
+    the gitleaksignore file.
+    """
     text = gitleaksignore_text(
         [
             _exc(GITLEAKS_FINGERPRINT, scanner="gitleaks"),
@@ -422,7 +427,8 @@ def test_paths_is_parsed_into_a_tuple(tmp_path):
 def test_paths_on_a_non_trivy_scanner_is_rejected(tmp_path):
     """A `paths` list on a gitleaks or pip-audit entry would read as scoped
     while actually suppressing tree-wide — the worst possible failure mode for
-    this field, so it is a hard error rather than a silent no-op."""
+    this field, so it is a hard error rather than a silent no-op.
+    """
     text = _scoped().replace("scanner: trivy", "scanner: pip-audit")
     with pytest.raises(ExceptionFileError, match="only trivy and semgrep support"):
         load(_write(tmp_path, text))
@@ -457,7 +463,8 @@ def test_path_with_embedded_newline_is_rejected(tmp_path):
 def test_paths_with_glob_metacharacters_are_rejected(tmp_path, bad):
     """Trivy matches `paths` as a glob, so `["**"]` reads in review as a scoped
     exception while suppressing the entire tree — exactly the failure mode the
-    field exists to prevent. A scoped entry must name its files."""
+    field exists to prevent. A scoped entry must name its files.
+    """
     text = _scoped(f'    paths:\n      - "{bad}"\n')
     with pytest.raises(ExceptionFileError, match="glob metacharacter"):
         load(_write(tmp_path, text))
@@ -497,7 +504,8 @@ def test_yaml_ignorefile_lists_each_id_under_all_four_kinds():
     """The plain format is kind-agnostic — one id there suppresses a finding of
     any kind. Trivy's YAML format has four: vulnerabilities, misconfigurations,
     secrets and licenses. Listing the id under every one of them is what keeps
-    the YAML file equivalent rather than narrower."""
+    the YAML file equivalent rather than narrower.
+    """
     doc = _yaml.safe_load(trivyignore_yaml_text([_exc("CVE-1", scanner="trivy")]))
     assert set(doc) == set(TRIVY_IGNORE_KINDS)
     assert set(TRIVY_IGNORE_KINDS) == {
@@ -526,7 +534,8 @@ def test_yaml_ignorefile_excludes_other_scanners():
 
 def test_yaml_statement_is_a_single_line():
     """A folded `reason` spans several lines; the statement must not, or the
-    generated document changes shape with the wording."""
+    generated document changes shape with the wording.
+    """
     multi = SecurityException(
         id="KSV017",
         package="infra",
@@ -544,7 +553,8 @@ def test_yaml_statement_is_a_single_line():
 
 def test_write_trivyignore_uses_plain_format_when_nothing_is_scoped(tmp_path):
     """Regression guard for the other eight repos: adding this field must not
-    change the file any repo without `paths` gets."""
+    change the file any repo without `paths` gets.
+    """
     base = tmp_path / "security-exceptions.trivyignore"
     written = write_trivyignore([_exc("CVE-1", scanner="trivy")], str(base))
     assert written == base
@@ -554,7 +564,8 @@ def test_write_trivyignore_uses_plain_format_when_nothing_is_scoped(tmp_path):
 
 def test_write_trivyignore_switches_to_yaml_when_any_entry_is_scoped(tmp_path):
     """Trivy picks its parser by extension, so the YAML format has to land on
-    a *.yaml path — the switch is a rename, not just a different body."""
+    a *.yaml path — the switch is a rename, not just a different body.
+    """
     base = tmp_path / "security-exceptions.trivyignore"
     scoped = SecurityException(
         id="KSV017",
@@ -576,7 +587,8 @@ def test_write_trivyignore_switches_to_yaml_when_any_entry_is_scoped(tmp_path):
 
 def test_cli_prints_the_path_it_wrote(tmp_path, capsys):
     """The workflows capture stdout to learn which file to hand trivy, so the
-    path must be the only thing on it."""
+    path must be the only thing on it.
+    """
     base = tmp_path / "security-exceptions.trivyignore"
     rc = main(["--file", str(_write(tmp_path, _scoped())), "--emit-trivyignore", str(base)])
     assert rc == 0
@@ -596,7 +608,8 @@ def test_yaml_ignorefile_has_no_anchors_or_aliases():
     """Each id is written under both kinds; if the two entries shared one
     `paths` list, PyYAML would emit `paths: *id001` for the second. Valid YAML,
     but a generated file someone reads mid-incident should not need aliases
-    resolved to show which files an exception covers."""
+    resolved to show which files an exception covers.
+    """
     scoped = SecurityException(
         id="KSV017",
         package="infra",

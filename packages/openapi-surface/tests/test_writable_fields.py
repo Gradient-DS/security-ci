@@ -101,7 +101,8 @@ def test_combinators_are_walked():
 
 def test_ref_cycles_terminate():
     """SpecTree emits self-referential schemas for tree-shaped models; a naive
-    walk recurses forever and the suite hangs rather than fails."""
+    walk recurses forever and the suite hangs rather than fails.
+    """
     doc = {
         "paths": {
             "/api/tree": {
@@ -129,7 +130,8 @@ def test_optional_nested_model_is_not_mistaken_for_a_string_leaf():
     property's own top-level dict then carries neither ``type`` nor
     ``properties`` -- both live one level down, inside the ``anyOf`` branches
     -- so a leaf check that fires before combinators are considered mistakes
-    the whole property for an untyped string and never looks inside it."""
+    the whole property for an untyped string and never looks inside it.
+    """
     doc = {
         "paths": {
             "/api/profile": {
@@ -167,7 +169,8 @@ def test_optional_nested_model_is_not_mistaken_for_a_string_leaf():
 def test_optional_array_of_models_is_not_mistaken_for_a_string_leaf():
     """Same trap one level deeper: ``Optional[list[Model]]`` renders as
     ``anyOf: [array-of-Model, null]``, so the array-items branch needs the
-    same combinator-aware leaf check as the properties branch does."""
+    same combinator-aware leaf check as the properties branch does.
+    """
     doc = {
         "paths": {
             "/api/profile": {
@@ -220,7 +223,8 @@ def test_read_methods_are_skipped():
 
 def test_the_real_spec_yields_fields_for_the_routes_that_take_bodies():
     """A derivation that silently returns nothing is worse than no derivation:
-    the attack plane would plant into no field and still report success."""
+    the attack plane would plant into no field and still report success.
+    """
     derived = writable_string_fields(json.loads(SPEC.read_text()))
     # The trimmed SpecTree fixture retains three writable operations and the
     # boolean-only favorite operation from the original full-spec smoke test.

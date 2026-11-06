@@ -5,7 +5,6 @@ from pathlib import Path
 
 from openapi_surface import query_parameters, writable_string_fields
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

@@ -51,7 +51,8 @@ def _gitleaks_step() -> dict:
 
 def _repo_checkout_step() -> dict:
     """The checkout of the CALLER's repository — the first checkout in the job.
-    The later one fetches the shared tooling into a subdirectory."""
+    The later one fetches the shared tooling into a subdirectory.
+    """
     checkouts = [
         s
         for s in _secrets_steps()
@@ -68,7 +69,8 @@ def _script_lines(step: dict) -> list[str]:
 
 def test_scan_step_pins_the_scan_to_head():
     """Regression guard: dropping --log-opts silently restores `--all`, and
-    the failure mode is a red gate on a branch the PR author does not own."""
+    the failure mode is a red gate on a branch the PR author does not own.
+    """
     command = " ".join(_script_lines(_gitleaks_step()))
     assert "--log-opts=" in command, (
         "gitleaks git defaults its log options to `--full-history --all`; "
@@ -89,7 +91,8 @@ def test_caller_checkout_keeps_full_history():
     fetch-depth: 0 that makes the commits behind HEAD present at all. A
     shallow checkout would leave the flag in place and still reduce the scan
     to the tip commit — a gate that passes because it looked at almost
-    nothing. Neither guard is sufficient alone, so both are asserted."""
+    nothing. Neither guard is sufficient alone, so both are asserted.
+    """
     step = _repo_checkout_step()
     assert (step.get("with") or {}).get("fetch-depth") == 0, (
         "the secrets job must check out full history; without fetch-depth: 0 "
@@ -114,7 +117,8 @@ def _git(repo: Path, *args: str) -> None:
 
 def _secret(seed: int) -> str:
     """A token-shaped string gitleaks recognises. Generated, never a literal,
-    so this file does not itself become a finding."""
+    so this file does not itself become a finding.
+    """
     rnd = random.Random(seed)
     body = "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(36))
     return "ghp_" + body
@@ -158,7 +162,8 @@ def _scan(repo: Path, empty_ignore: Path, *extra: str) -> int:
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """A repo whose HEAD branch holds one secret in a since-deleted file, with
-    a second secret living only on an unrelated branch."""
+    a second secret living only on an unrelated branch.
+    """
     r = tmp_path / "repo"
     r.mkdir()
     _git(r, "init", "-q", "-b", "main", ".")
@@ -191,7 +196,8 @@ def test_head_scope_excludes_other_branches(repo, tmp_path):
 @needs_gitleaks
 def test_head_scope_still_scans_deleted_history(repo, tmp_path):
     """The one finding left is the root-commit secret in a file that no longer
-    exists — proof the fix scopes the ref set without shrinking to the diff."""
+    exists — proof the fix scopes the ref set without shrinking to the diff.
+    """
     empty = tmp_path / "empty.gitleaksignore"
     empty.write_text("")
     _scan(repo, empty, "--log-opts=--full-history HEAD")

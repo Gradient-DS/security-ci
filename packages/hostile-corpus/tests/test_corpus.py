@@ -36,7 +36,8 @@ def test_every_payload_carries_the_reflection_probe():
 def test_the_probe_is_not_html_escapable_by_accident():
     """The probe must survive escaping, or a reflection check reports a false
     clean on a response that escaped the payload's angle brackets but still
-    echoed it."""
+    echoed it.
+    """
     assert "<" not in REFLECTION_PROBE
     assert "&" not in REFLECTION_PROBE
 
@@ -86,7 +87,8 @@ def test_whitespace_variants_preserve_the_value():
 
 def test_whitespace_variants_include_a_trailing_newline():
     """The specific shape a `$`-anchored Python regex accepts and a database
-    input parser then refuses."""
+    input parser then refuses.
+    """
     from hostile_corpus import whitespace_variants
 
     assert "abc\n" in whitespace_variants("abc")
@@ -118,7 +120,8 @@ def test_a_dollar_anchored_regex_accepts_a_trailing_newline_variant():
 
 def test_non_object_bodies_are_not_objects():
     """Every entry must be something `body.get(...)` cannot be called on, or
-    the shape is not being tested."""
+    the shape is not being tested.
+    """
     from hostile_corpus import NON_OBJECT_BODIES
 
     assert NON_OBJECT_BODIES
@@ -129,7 +132,8 @@ def test_non_object_bodies_are_not_objects():
 def test_non_object_bodies_include_a_top_level_array():
     """The one that reached a live 500 in AIRE: a truthy non-dict, so
     `request.get_json(silent=True) or {}` keeps it and the next `.get()`
-    raises AttributeError."""
+    raises AttributeError.
+    """
     from hostile_corpus import NON_OBJECT_BODIES
 
     arrays = [b for b in NON_OBJECT_BODIES if isinstance(b, list)]
