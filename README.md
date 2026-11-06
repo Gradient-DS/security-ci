@@ -25,7 +25,6 @@ else.
 | `actions/tested-tree/{record,check}` | Composite: reuse a passing run's result on a push of the exact same git tree ([README](actions/tested-tree/README.md)) |
 | `scripts/runtime_gate.py` | Decides the `runtime-gate` verdict. A skipped audit is never a pass |
 | `scripts/security_exceptions.py` | Validates per-repo exception files and their expiry |
-| `scripts/notify_scheduled_failure.py` | Issue title and body for a failed scheduled source or image scan |
 | `scripts/tested_tree.py` | The logic of the tested-tree actions: who may record, which records count |
 | `scripts/requirements_closure.py` | Decides which requirements files pip-audit may audit without resolving |
 | `falco/rules/ci-egress.yaml` | Egress and sensitive-read rules, plus the sensor self-test |
@@ -108,7 +107,7 @@ from a workflow problem.
 | `cache-from` | `''` | Replaces the gha cache sources, e.g. a `type=registry` ref. ghcr.io is read with `GITHUB_TOKEN`. |
 | `image-ref` | `''` | Scan this pushed `name@sha256:...` instead of building. Same Trivy settings and exceptions. |
 | `no-cache-filters` | `''` | v7. Stages rebuilt without cache (build-push-action `no-cache-filters`). Name the stage that runs `apt-get upgrade` / `apk upgrade`; replaces the date-valued `*_UPGRADE_EPOCH` build arg. |
-| `notify-on-schedule-failure` | `false` | v7. On a failed `schedule` run, open or comment on one `security`-labelled issue per image (`Scheduled image scan failing: <repo> / <image-name>`) naming the digest and failed scanners. Needs `issues: write` on the calling job. |
+| `notify-on-schedule-failure` | `false` | Deprecated, no-op. It used to open a GitHub issue on a failed `schedule` run; Gradient does not use GitHub Issues. Kept so callers that pass it keep working. |
 | `timeout-minutes` | `40` | Job timeout (Trivy alone may take 20). |
 | `runs-on` | `ubuntu-latest` | v9. Runner label for every job. A self-hosted label must belong to a runner group limited to private repos. With `maximize-build-space`, the cleanup runs only on GitHub-hosted runners. |
 
@@ -116,25 +115,12 @@ The image job asks for `packages: read` (for `image-ref` and a ghcr.io
 `cache-from`). It is part of the restricted default token, so a caller only
 has to grant it if it narrows the calling job's `permissions:`.
 
-The source workflow takes the same `notify-on-schedule-failure` input (v9;
-before v9 its notifier always ran on a failed scheduled scan). Both notifier
-jobs request no permissions of their own and inherit the calling job's: a reusable job that asks for `issues: write` makes every caller that does
-not grant it fail at startup, input or no input. So a caller that turns it on
-grants it:
-
-```yaml
-  image-published:
-    uses: Gradient-DS/security-ci/.github/workflows/security-image.yml@<sha> # v7
-    secrets: inherit
-    permissions:
-      contents: read
-      packages: read
-      issues: write
-    with:
-      image-name: app
-      image-ref: ${{ needs.resolve.outputs.digest }}
-      notify-on-schedule-failure: true
-```
+Neither scan workflow opens GitHub issues. A failed scheduled scan is a red
+run: the source scan's job summary has a table of scanners and results, the
+image scan's names the image digest and the failed scanners. Both workflows
+still accept `notify-on-schedule-failure` (source and image) as a no-op, so a
+caller can drop that input, and any `issues: write` it granted for it, at its
+own pace.
 
 Both reusable scan workflows take `runs-on` (default `ubuntu-latest`),
 `timeout-minutes` (source: 20) and a

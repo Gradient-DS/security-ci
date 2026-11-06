@@ -38,11 +38,41 @@ for the first rollout:
 `labels.json` maps each repo to `{"tier": ..., "branch_model": ...}`; it is only
 needed for the first run. Afterwards the properties on GitHub are the record.
 
+## Teams
+
+Access to repos goes through teams, not per person. `teams.json` is the desired
+state:
+
+| Team | Members | Repos |
+| --- | --- | --- |
+| `employees` | every org member | `push` (write) on every non-archived repo |
+| `admins` | every org owner | `admin` on every non-archived repo |
+| `security` | listed by login | `push` on the repos listed |
+
+Outside collaborators keep their grants per repo; nothing here touches them.
+
+    python scripts/governance.py teams                          # print the plan
+    python scripts/governance.py teams --apply                  # create teams, set members and grants
+    python scripts/governance.py teams --prune-direct           # list direct member grants the teams cover
+    python scripts/governance.py teams --prune-direct --apply   # remove them
+
+`teams` creates missing teams, adds and removes members, and adds, corrects or
+revokes repo grants; it leaves grants on archived repos alone. Direct grants of
+org members are reported on every run. `--prune-direct` removes only those the
+teams (or org ownership) already cover, and refuses to run until the teams are
+in step. A direct grant above what the teams give, such as `maintain`, is kept
+and listed; drop it by hand or give it a team.
+
+The nightly audit job ends with `teams --grants-only --apply`: every non-archived
+repo, including one created that day, gets the grants of the teams that exist.
+Team creation and membership are left to an org admin running `teams --apply`;
+the run summary lists what is waiting.
+
 ## Audit
 
 `.github/workflows/governance-audit.yml` runs `scripts/governance_audit.py` every
-night at 03:17 UTC, and on demand (`dry-run` prints the findings and touches no
-issue). It checks every non-archived repo:
+night at 03:17 UTC, and on demand. The audit only reads and reports; it opens
+no issues and changes no setting. It checks every non-archived repo:
 
 | Tier | Checked |
 | --- | --- |
@@ -54,14 +84,16 @@ The org rulesets on GitHub must match `rulesets/*.json`, and no other org rulese
 may exist. Ruleset bypasses on production repos in the last day are listed in
 the run summary for information.
 
-Findings go to one issue per repo, titled `Governance audit: <repo>` and labelled
-`governance`: opened or updated while there are findings, closed with a comment
-once the repo is clean. Org drift goes to `Governance audit: org` here. The run
+Findings go to the run summary, one table per repo, and to the job log; org
+drift is listed under "Org". Findings do not fail the run: the audit stays
+green and the summary is the to-do list. The run
 summary has a table per repo and a "Ready for production" list: development
 repos with no findings.
 
 The audit runs as the GitHub App `gradient-ds-governance-audit`, installed on all
-repositories with read access to Administration, Metadata, Contents, Checks and
-Actions, org Custom properties and org Administration, and read/write on Issues.
+repositories with read access to Metadata, Contents, Checks and Actions, org
+Custom properties, org Administration and org Members, and read/write on
+Administration (the team grant sync: `PUT /orgs/{org}/teams/{team}/repos/...`
+needs repository Administration write and org Members read).
 Its id and private key are the secrets `GOVERNANCE_APP_ID` and
 `GOVERNANCE_APP_PRIVATE_KEY`.

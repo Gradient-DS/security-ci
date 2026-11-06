@@ -29,19 +29,17 @@ def test_no_cache_filters_defaults_off_and_reaches_the_build():
     assert _build_step()["with"]["no-cache-filters"] == "${{ inputs.no-cache-filters }}"
 
 
-def test_notifier_is_opt_in_and_schedule_only():
+def test_notify_input_is_kept_as_a_no_op():
+    """Callers still pass it; removing a passed input breaks the caller."""
     assert _inputs()["notify-on-schedule-failure"]["default"] is False
-    cond = _wf()["jobs"]["notify-scheduled-failure"]["if"]
-    for part in ("always()", "inputs.notify-on-schedule-failure", "github.event_name == 'schedule'",
-                 "needs.scan.result == 'failure'"):
-        assert part in cond
+    assert "Deprecated" in _inputs()["notify-on-schedule-failure"]["description"]
+    assert list(_wf()["jobs"]) == ["scan"]
+    assert "gh issue" not in WORKFLOW.read_text()
 
 
-def test_notifier_requests_no_permissions_of_its_own():
-    """A reusable job asking for `issues: write` fails every caller that does
-    not grant it at startup, whatever its `if` says: v6 callers grant only
-    contents/packages read."""
-    assert "permissions" not in _wf()["jobs"]["notify-scheduled-failure"]
+def test_verdict_writes_the_digest_and_failures_to_the_summary():
+    steps = {s.get("id"): s for s in _wf()["jobs"]["scan"]["steps"]}
+    assert '>> "$GITHUB_STEP_SUMMARY"' in steps["verdict"]["run"]
 
 
 def test_scan_job_names_what_failed_even_when_it_fails():
