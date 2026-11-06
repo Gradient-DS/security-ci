@@ -75,7 +75,8 @@ def test_semgrep_flags():
 def test_semgrep_excludes_the_same_noise_dirs_as_bandit():
     (bandit,) = [s for s in _scan_steps() if s.get("id") == "bandit"]
     run = _semgrep()["run"]
-    for d in ("node_modules", ".venv", "dist", ".worktrees", ".wt-*", "tests"):
+    # .security-tooling: the security-ci checkout itself, not the caller's code.
+    for d in ("node_modules", ".venv", "dist", ".worktrees", ".wt-*", "tests", ".security-tooling"):
         assert d in bandit["run"], d
         assert f"--exclude {d}" in run or f"--exclude '{d}'" in run, d
 

@@ -247,7 +247,7 @@ jobs:
           pip install bandit
           # shellcheck disable=SC2086
           bandit -r $PYTHON_PATHS -ll --confidence-level=medium \
-            -x '*/node_modules/*,*/.venv/*,*/dist/*,*/.worktrees/*,*/.wt-*,*/tests/*'
+            -x '*/node_modules/*,*/.venv/*,*/dist/*,*/.worktrees/*,*/.wt-*,*/tests/*,*/.security-tooling/*'
 
       # ── SAST (Semgrep) ────────────────────────────────────────────────
       # Pinned semgrep from PyPI in a throwaway venv, not the official image:
@@ -322,6 +322,7 @@ jobs:
             --disable-nosem --x-ignore-semgrepignore-files \
             --exclude node_modules --exclude .venv --exclude dist \
             --exclude .worktrees --exclude '.wt-*' --exclude tests \
+            --exclude .security-tooling \
             --json-output "$SEMGREP_JSON" \
             $SEMGREP_PATHS || rc=$?
           case "$rc" in
