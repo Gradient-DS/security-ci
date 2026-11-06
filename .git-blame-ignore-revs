@@ -1,3 +1,5 @@
 # Commits that only reformat; `git config blame.ignoreRevsFile .git-blame-ignore-revs` to skip them in blame.
 # ruff format at 120
 2ebde486d970ec0f93dc2e1c27b134977ec5e77e
+# ruff format at 120 (after merging the teams-as-code branch)
+07d23c4d69859e1dc704b48f2fd8c5c750a4aa9b
