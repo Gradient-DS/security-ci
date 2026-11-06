@@ -18,6 +18,7 @@ else.
 | --- | --- |
 | `.github/workflows/security-source.yml` | Reusable: gitleaks, Bandit, Semgrep (opt-in), pip-audit, npm audit and trivy config, plus the exception-file gate, as steps of one `Source scans` job |
 | `.github/workflows/security-image.yml` | Reusable: Trivy image scan, of an image it builds or of a pushed digest (`image-ref`) |
+| `.github/workflows/pre-commit.yml` | Reusable: runs the caller's `.pre-commit-config.yaml` on all files and checks its ruff config against the org baseline; check name `pre-commit / pre-commit` |
 | `.github/workflows/runtime-security.yml` | Reusable: brings up a caller's stack under Falco, drives its traffic, gates on egress and sensitive reads |
 | `.github/workflows/tooling-token-smoke.yml` | Diagnostic: proves the org App can read this repository |
 | `actions/linear-link` | Composite: fails a PR whose description links no Linear ticket (`Fixes GRA-123`, `Part of GRA-123`); required by the org rulesets ([README](actions/linear-link/README.md)) |
@@ -28,6 +29,8 @@ else.
 | `scripts/notify_scheduled_failure.py` | Issue title and body for a failed scheduled source or image scan |
 | `scripts/tested_tree.py` | The logic of the tested-tree actions: who may record, which records count |
 | `scripts/requirements_closure.py` | Decides which requirements files pip-audit may audit without resolving |
+| `pre-commit/` | Org `.pre-commit-config.yaml` templates and the ruff baseline ([README](pre-commit/README.md)) |
+| `scripts/ruff_baseline.py` | The ruff baseline check the pre-commit workflow runs |
 | `falco/rules/ci-egress.yaml` | Egress and sensitive-read rules, plus the sensor self-test |
 | `packages/openapi-surface` | OpenAPI introspection: body skeletons, writable and constrained fields |
 | `packages/hostile-corpus` | The hostile payloads and shapes the attack planes drive |
