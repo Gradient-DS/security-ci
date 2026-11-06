@@ -159,7 +159,8 @@ def test_main_ignores_untracked_configs(tmp_path):
     assert rb.main([str(repo)]) == 0
 
 
-def test_main_fails_on_a_bad_config(tmp_path, capsys):
+def test_main_fails_on_a_bad_config(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # plain output, not ::error annotations
     repo = _git_repo(tmp_path, {"ruff.toml": GOOD, "sub/ruff.toml": "line-length = 80\n"})
     assert rb.main([str(repo)]) == 1
     assert "sub/ruff.toml: line-length is 80" in capsys.readouterr().out
