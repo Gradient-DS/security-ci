@@ -1,9 +1,11 @@
 name: Governance audit
 
 # Nightly: checks every Gradient-DS repo against its `tier` and `branch_model`
-# (governance/README.md, "Audit") and keeps one `Governance audit: <repo>` issue
-# per repo in step. The App token reads every repo and writes those issues; the
-# workflow's own GITHUB_TOKEN only checks out this repository.
+# (governance/README.md, "Audit") and writes the findings to the run summary,
+# then gives every non-archived repo the team grants in governance/teams.json
+# (new repos get `employees` and `admins`). The App token reads every repo and
+# writes the team grants; the workflow's own GITHUB_TOKEN only checks out this
+# repository.
 
 on:
   schedule:
@@ -11,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       dry-run:
-        description: Print the findings and the summary; open, update or close no issue
+        description: Print the findings, the summary and the team grants it would add; change nothing
         type: boolean
         default: false
 
@@ -52,3 +54,14 @@ jobs:
           args=()
           if [ "${DRY_RUN:-false}" = "true" ]; then args+=(--dry-run); fi
           uv run --no-dev python -m scripts.governance_audit "${args[@]}"
+
+      - name: Sync team grants
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          args=(teams --grants-only)
+          if [ "${DRY_RUN:-false}" != "true" ]; then args+=(--apply); fi
+          uv run --no-dev python -m scripts.governance "${args[@]}"

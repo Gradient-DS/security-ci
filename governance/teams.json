@@ -1,0 +1,29 @@
+{
+  "_comment": "Org teams and their repo grants; applied by `scripts/governance.py teams`. `members` is a list of logins, or `@org-members` (every org member) or `@org-owners` (every org owner), read from GitHub at run time. `repos` maps repo -> permission (pull, triage, push, maintain, admin); `*` means every non-archived repo. Outside collaborators are not managed here.",
+  "employees": {
+    "description": "Every org member: write on every non-archived repo.",
+    "members": "@org-members",
+    "repos": {"*": "push"}
+  },
+  "admins": {
+    "description": "Org owners: admin on every non-archived repo.",
+    "members": "@org-owners",
+    "repos": {"*": "admin"}
+  },
+  "security": {
+    "description": "Coders responsible for security checks on code",
+    "members": ["LexLubbers", "marijngradient"],
+    "repos": {
+      "AIRE": "push",
+      "HIPE": "push",
+      "open-webui": "push",
+      "security-ci": "push",
+      "soev": "push",
+      "soev-dashboard": "push",
+      "soev-gitops": "push",
+      "soev-solutions": "push",
+      "soevai-website": "push",
+      "warren": "push"
+    }
+  }
+}

@@ -4,15 +4,14 @@
 
 Reads the `tier` and `branch_model` properties, then checks each non-archived
 repo against what its tier promises (governance/README.md, "Audit"). Findings go
-to one issue per repo, `Governance audit: <repo>`, labelled `governance`: opened
-or updated while there are findings, closed once the repo is clean. Org ruleset
-drift goes to `Governance audit: org` in security-ci. --dry-run prints the
-findings and the summary and touches no issue.
+to the job summary, one table per repo, and to stdout; org ruleset drift goes
+under "Org". The audit changes nothing and exits 0 with findings: they are a
+to-do list, not a failure. --dry-run is accepted for the workflow's input and
+changes nothing here.
 
 The checks are pure functions over fetched data; `GitHub` is the only part that
 talks to the API. Token: GH_TOKEN, else GITHUB_TOKEN, else `gh auth token`.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -35,8 +34,6 @@ from scripts import security_exceptions
 from scripts.governance import CHECKS_RULESET, ORG, ROOT
 
 SECURITY_CI = "security-ci"
-LABEL = "governance"
-TITLE_PREFIX = "Governance audit"
 MAX_PIN_AGE_DAYS = 120
 EXCEPTIONS_FILE = ".github/security-exceptions.yml"
 REUSABLE = re.compile(r"^Gradient-DS/security-ci/\.github/workflows/[^@]+\.ya?ml@(.+)$")
@@ -48,17 +45,11 @@ TIERS = ("production", "development", "experiment")
 MODELS = ("github-flow", "gitflow")
 
 
-def issue_title(repo: str) -> str:
-    return f"{TITLE_PREFIX}: {repo}"
-
-
 # --- Draft pull requests never run CI --------------------------------------
 
 STATUS_FN = re.compile(r"\b(always|cancelled|failure|success)\(\)")
-DRAFT_GUARD = re.compile(
-    r"!\s*github\.event\.pull_request\.draft"
-    r"|github\.event\.pull_request\.draft\s*(!=\s*true|==\s*false)"
-)
+DRAFT_GUARD = re.compile(r"!\s*github\.event\.pull_request\.draft"
+                         r"|github\.event\.pull_request\.draft\s*(!=\s*true|==\s*false)")
 
 
 def conjuncts(expr: str) -> list[str]:
@@ -139,14 +130,12 @@ def check_drafts(path: str, workflow: dict) -> list[str]:
     for name, job in (workflow.get("jobs") or {}).items():
         job = job or {}
         if needs_draft_check(job) and not skips_drafts(job):
-            out.append(
-                f"`{path}` job `{name}` runs on draft PRs: add `github.event.pull_request.draft != true` to its `if`"
-            )
+            out.append(f"`{path}` job `{name}` runs on draft PRs: add "
+                       "`github.event.pull_request.draft != true` to its `if`")
     return out
 
 
 # --- Per-repo checks ----------------------------------------------------------
-
 
 @dataclass
 class Repo:
@@ -154,13 +143,13 @@ class Repo:
     tier: str | None = None
     branch_model: str | None = None
     default_branch: str = "main"
-    source: str = "own"  # own | upstream-mirror
-    branches: dict[str, bool] = field(default_factory=dict)  # dev/test/main -> exists
-    workflows: dict[str, str] = field(default_factory=dict)  # path -> text
-    gate: list[dict] | None = None  # check runs named gate
+    source: str = "own"                                            # own | upstream-mirror
+    branches: dict[str, bool] = field(default_factory=dict)        # dev/test/main -> exists
+    workflows: dict[str, str] = field(default_factory=dict)        # path -> text
+    gate: list[dict] | None = None                                 # check runs named gate
     exceptions_text: str | None = None
-    rules: dict[str, list[dict]] = field(default_factory=dict)  # branch -> effective rules
-    rulesets: list[dict] = field(default_factory=list)  # repo rulesets, full
+    rules: dict[str, list[dict]] = field(default_factory=dict)     # branch -> effective rules
+    rulesets: list[dict] = field(default_factory=list)             # repo rulesets, full
     classic_protection: bool = False
     bypasses: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -171,9 +160,8 @@ def check_properties(repo: Repo) -> list[str]:
     if repo.tier not in TIERS:
         out.append(f"custom property `tier` is {_shown(repo.tier)}; expected one of {', '.join(TIERS)}")
     if repo.branch_model not in MODELS:
-        out.append(
-            f"custom property `branch_model` is {_shown(repo.branch_model)}; expected one of {', '.join(MODELS)}"
-        )
+        out.append(f"custom property `branch_model` is {_shown(repo.branch_model)}; "
+                   f"expected one of {', '.join(MODELS)}")
     return out
 
 
@@ -183,11 +171,8 @@ def _shown(value: str | None) -> str:
 
 def check_branch_model(repo: Repo) -> list[str]:
     if repo.branch_model == "gitflow":
-        out = (
-            []
-            if repo.default_branch == "dev"
-            else [f"gitflow repo has default branch `{repo.default_branch}`, expected `dev`"]
-        )
+        out = [] if repo.default_branch == "dev" else [
+            f"gitflow repo has default branch `{repo.default_branch}`, expected `dev`"]
         out += [f"gitflow repo has no `{b}` branch" for b in ("test", "main") if not repo.branches.get(b)]
         return out
     if repo.branch_model == "github-flow":
@@ -222,14 +207,12 @@ def security_ci_refs(workflows: dict[str, dict]) -> list[tuple[str, str]]:
     return refs
 
 
-def check_security_ci(workflows: dict[str, dict], commit_dates: dict[str, dt.date | None], today: dt.date) -> list[str]:
+def check_security_ci(workflows: dict[str, dict], commit_dates: dict[str, dt.date | None],
+                      today: dt.date) -> list[str]:
     refs = security_ci_refs(workflows)
     if not refs:
-        if any(
-            TEMPLATE_SECURITY.match(str((job or {}).get("uses") or ""))
-            for wf in workflows.values()
-            for job in (wf.get("jobs") or {}).values()
-        ):
+        if any(TEMPLATE_SECURITY.match(str((job or {}).get("uses") or ""))
+               for wf in workflows.values() for job in (wf.get("jobs") or {}).values()):
             return []
         return ["no workflow on the default branch calls a `Gradient-DS/security-ci` reusable workflow"]
     out = []
@@ -241,7 +224,8 @@ def check_security_ci(workflows: dict[str, dict], commit_dates: dict[str, dt.dat
         if when is None:
             out.append(f"`{path}` pins security-ci `{ref[:12]}`, which is not a commit in security-ci")
         elif (today - when).days > MAX_PIN_AGE_DAYS:
-            out.append(f"`{path}` pins security-ci `{ref[:12]}` from {when}, older than {MAX_PIN_AGE_DAYS} days")
+            out.append(f"`{path}` pins security-ci `{ref[:12]}` from {when}, "
+                       f"older than {MAX_PIN_AGE_DAYS} days")
     return out
 
 
@@ -269,19 +253,13 @@ def check_exceptions(text: str | None, today: dt.date) -> list[str]:
             excs = security_exceptions.load(path)
         except (security_exceptions.ExceptionFileError, yaml.YAMLError) as exc:
             return [f"`{EXCEPTIONS_FILE}` is invalid: {str(exc).replace(str(path), EXCEPTIONS_FILE)}"]
-    return [
-        f"security exception `{e.id}` ({e.package}) expired on {e.recheck}"
-        for e in security_exceptions.expired(excs, today)
-    ]
+    return [f"security exception `{e.id}` ({e.package}) expired on {e.recheck}"
+            for e in security_exceptions.expired(excs, today)]
 
 
 def required_contexts(rules: list[dict]) -> set[str]:
-    return {
-        c["context"]
-        for r in rules
-        if r.get("type") == "required_status_checks"
-        for c in (r.get("parameters") or {}).get("required_status_checks", [])
-    }
+    return {c["context"] for r in rules if r.get("type") == "required_status_checks"
+            for c in (r.get("parameters") or {}).get("required_status_checks", [])}
 
 
 def check_production_rules(repo: Repo, repo_checks: dict[str, list[str]]) -> list[str]:
@@ -305,17 +283,15 @@ def check_production_rules(repo: Repo, repo_checks: dict[str, list[str]]) -> lis
             out.append(f"repo ruleset `{CHECKS_RULESET}` holds {types}; only required_status_checks")
         live = required_contexts(checks.get("rules", []))
         if live != set(expected):
-            out.append(
-                f"repo ruleset `{CHECKS_RULESET}` requires {sorted(live)}; repo-checks.json lists {sorted(expected)}"
-            )
+            out.append(f"repo ruleset `{CHECKS_RULESET}` requires {sorted(live)}; "
+                       f"repo-checks.json lists {sorted(expected)}")
     if repo.classic_protection:
         out.append(f"classic branch protection on `{branch}`; rulesets only")
     return out
 
 
-def audit_repo(
-    repo: Repo, commit_dates: dict[str, dt.date | None], repo_checks: dict[str, list[str]], today: dt.date
-) -> list[str]:
+def audit_repo(repo: Repo, commit_dates: dict[str, dt.date | None], repo_checks: dict[str, list[str]],
+               today: dt.date) -> list[str]:
     out = check_properties(repo) + list(repo.errors)
     if repo.tier not in ("development", "production"):
         return out
@@ -338,7 +314,6 @@ def audit_repo(
 
 # --- Org rulesets -------------------------------------------------------------
 
-
 def _diff(expected: object, live: object, where: str) -> list[str]:
     """Paths where `live` differs from `expected`; keys only `live` has are ignored."""
     if isinstance(expected, dict):
@@ -354,9 +329,7 @@ def _diff(expected: object, live: object, where: str) -> list[str]:
 
 def _comparable(rs: dict) -> dict:
     return {
-        "name": rs.get("name"),
-        "target": rs.get("target"),
-        "enforcement": rs.get("enforcement"),
+        "name": rs.get("name"), "target": rs.get("target"), "enforcement": rs.get("enforcement"),
         "conditions": rs.get("conditions"),
         "bypass_actors": sorted((a.get("actor_type"), a.get("bypass_mode")) for a in rs.get("bypass_actors") or []),
         "rules": sorted(rs.get("rules") or [], key=lambda r: r.get("type", "")),
@@ -391,22 +364,6 @@ def check_org_rulesets(expected: dict[str, dict], live: list[dict]) -> list[str]
 
 # --- Reporting ----------------------------------------------------------------
 
-
-def issue_body(repo: str, findings: list[str], bypasses: list[dict], run_url: str) -> str:
-    lines = [f"The nightly governance audit found {len(findings)} problem(s) in **{repo}**.", ""]
-    lines += [f"- [ ] {f}" for f in findings]
-    if bypasses:
-        lines += ["", "Ruleset bypasses in the last day (informational):", ""]
-        lines += [f"- {b.get('actor_name')} pushed `{b.get('ref')}` at {b.get('pushed_at')}" for b in bypasses]
-    lines += [
-        "",
-        f"Run: {run_url}" if run_url else "",
-        "This issue is updated every night and closed when the audit comes back clean. "
-        "What each check means: Gradient-DS/security-ci, governance/README.md.",
-    ]
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def summary(results: dict[str, tuple[Repo, list[str]]], org_findings: list[str]) -> str:
     lines = ["# Governance audit", "", "| Repo | Tier | Branch model | Findings |", "| --- | --- | --- | --- |"]
     for name, (repo, findings) in sorted(results.items(), key=lambda kv: kv[0].lower()):
@@ -414,6 +371,12 @@ def summary(results: dict[str, tuple[Repo, list[str]]], org_findings: list[str])
     ready = sorted(n for n, (r, f) in results.items() if r.tier == "development" and not f)
     lines += ["", "## Ready for production", ""] + ([f"- {n}" for n in ready] or ["None."])
     lines += ["", "## Org", ""] + ([f"- {f}" for f in org_findings] or ["No ruleset drift."])
+    with_findings = [(n, f) for n, (_, f) in sorted(results.items(), key=lambda kv: kv[0].lower()) if f]
+    if with_findings:
+        lines += ["", "## Findings"]
+        for name, findings in with_findings:
+            lines += ["", f"### {name}", "", "| Finding |", "| --- |"]
+            lines += ["| " + f.replace("|", "\\|") + " |" for f in findings]
     bypassed = [(n, b) for n, (r, _) in sorted(results.items()) for b in r.bypasses]
     if bypassed:
         lines += ["", "## Ruleset bypasses, last day", ""]
@@ -422,7 +385,6 @@ def summary(results: dict[str, tuple[Repo, list[str]]], org_findings: list[str])
 
 
 # --- GitHub -------------------------------------------------------------------
-
 
 class ApiError(RuntimeError):
     def __init__(self, status: int, path: str):
@@ -473,9 +435,8 @@ class GitHub:
 
 def collect(gh: GitHub, meta: dict, props: dict[str, str]) -> Repo:
     name = meta["name"]
-    repo = Repo(
-        name, props.get("tier"), props.get("branch_model"), meta["default_branch"], source=props.get("source") or "own"
-    )
+    repo = Repo(name, props.get("tier"), props.get("branch_model"), meta["default_branch"],
+                source=props.get("source") or "own")
     if repo.tier not in ("development", "production"):
         return repo
     base, branch = f"repos/{ORG}/{name}", repo.default_branch
@@ -509,7 +470,6 @@ def collect(gh: GitHub, meta: dict, props: dict[str, str]) -> Repo:
     attempt("the gate check run", gate)
     attempt(EXCEPTIONS_FILE, exceptions)
     if repo.tier == "production":
-
         def rules():
             for b in {branch, "main"} if repo.branch_model == "gitflow" else {branch}:
                 repo.rules[b] = gh.paginate(f"{base}/rules/branches/{b}")
@@ -545,33 +505,6 @@ def commit_dates(gh: GitHub, repos: list[Repo]) -> dict[str, dt.date | None]:
     return out
 
 
-def sync_issue(gh: GitHub, repo: str, title: str, body: str | None) -> None:
-    """Open or update the issue when there is a body, close it when there is none."""
-    try:
-        open_ = [
-            i
-            for i in gh.paginate(f"repos/{ORG}/{repo}/issues?state=open&labels={LABEL}")
-            if i["title"] == title and "pull_request" not in i
-        ]
-        if body is not None and open_:
-            gh.request("PATCH", f"repos/{ORG}/{repo}/issues/{open_[0]['number']}", {"body": body})
-        elif body is not None:
-            gh.request("POST", f"repos/{ORG}/{repo}/issues", {"title": title, "body": body, "labels": [LABEL]})
-        for issue in open_ if body is None else []:
-            gh.request(
-                "POST",
-                f"repos/{ORG}/{repo}/issues/{issue['number']}/comments",
-                {"body": "The governance audit is clean for this repo. Closing."},
-            )
-            gh.request(
-                "PATCH",
-                f"repos/{ORG}/{repo}/issues/{issue['number']}",
-                {"state": "closed", "state_reason": "completed"},
-            )
-    except ApiError as exc:  # e.g. 410: issues disabled
-        print(f"::warning::could not sync issue in {repo}: {exc}")
-
-
 def token() -> str:
     for var in ("GH_TOKEN", "GITHUB_TOKEN"):
         if os.environ.get(var):
@@ -598,53 +531,31 @@ def org_rulesets(gh: GitHub, metas: list[dict]) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dry-run", action="store_true", help="print findings; touch no issue")
-    args = ap.parse_args(argv)
+    ap.add_argument("--dry-run", action="store_true", help="no-op: the audit only reports")
+    ap.parse_args(argv)
     gh, today = GitHub(token()), dt.date.today()
-    run_url = (
-        f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
-        f"{os.environ['GITHUB_RUN_ID']}"
-        if os.environ.get("GITHUB_RUN_ID")
-        else ""
-    )
 
-    props = {
-        p["repository_name"]: {v["property_name"]: v["value"] for v in p["properties"]}
-        for p in gh.paginate(f"orgs/{ORG}/properties/values")
-    }
+    props = {p["repository_name"]: {v["property_name"]: v["value"] for v in p["properties"]}
+             for p in gh.paginate(f"orgs/{ORG}/properties/values")}
     metas = [m for m in gh.paginate(f"orgs/{ORG}/repos?type=all") if not m["archived"]]
     repos = [collect(gh, m, props.get(m["name"], {})) for m in metas]
     dates = commit_dates(gh, repos)
-    repo_checks = {
-        k: v for k, v in json.loads((ROOT / "repo-checks.json").read_text()).items() if not k.startswith("_")
-    }
+    repo_checks = {k: v for k, v in json.loads((ROOT / "repo-checks.json").read_text()).items()
+                   if not k.startswith("_")}
     results = {r.name: (r, audit_repo(r, dates, repo_checks, today)) for r in repos}
 
-    expected = {
-        json.loads(p.read_text())["name"]: json.loads(p.read_text()) for p in sorted((ROOT / "rulesets").glob("*.json"))
-    }
+    expected = {json.loads(p.read_text())["name"]: json.loads(p.read_text())
+                for p in sorted((ROOT / "rulesets").glob("*.json"))}
     org_findings = check_org_rulesets(expected, org_rulesets(gh, metas))
 
     text = summary(results, org_findings)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
             fh.write(text)
-    if args.dry_run:
-        for name, (repo, findings) in sorted(results.items(), key=lambda kv: kv[0].lower()):
-            for f in findings:
-                print(f"{name}: {f}")
-        print(text)
-        return 0
-
-    for name, (repo, findings) in results.items():
-        body = issue_body(name, findings, repo.bypasses, run_url) if findings else None
-        sync_issue(gh, name, issue_title(name), body)
-    sync_issue(
-        gh,
-        SECURITY_CI,
-        issue_title("org"),
-        issue_body("the org rulesets", org_findings, [], run_url) if org_findings else None,
-    )
+    for name, (_, findings) in sorted(results.items(), key=lambda kv: kv[0].lower()):
+        for f in findings:
+            print(f"{name}: {f}")
+    print(text)
     return 0
 
 

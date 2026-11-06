@@ -1,5 +1,4 @@
-"""Wiring of the reusable source-scan workflow's scheduled-failure notifier."""
-
+"""Wiring of the reusable source-scan workflow."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,17 +12,13 @@ def _wf() -> dict:
     return yaml.safe_load(WORKFLOW.read_text())
 
 
-def test_notifier_is_opt_in_and_scheduled_only():
-    # `on` parses as the boolean True under YAML 1.1.
-    assert _wf()[True]["workflow_call"]["inputs"]["notify-on-schedule-failure"]["default"] is False
-    cond = _wf()["jobs"]["notify-scheduled-failure"]["if"]
-    for part in ("always()", "inputs.notify-on-schedule-failure", "github.event_name == 'schedule'"):
-        assert part in cond
-
-
-def test_notifier_inherits_the_callers_permissions():
-    # A grant requested here fails every caller that does not give it.
-    assert "permissions" not in _wf()["jobs"]["notify-scheduled-failure"]
+def test_notify_input_is_kept_as_a_no_op():
+    """Callers still pass it; removing a passed input breaks the caller."""
+    inp = _wf()[True]["workflow_call"]["inputs"]["notify-on-schedule-failure"]
+    assert inp["default"] is False
+    assert "Deprecated" in inp["description"]
+    assert list(_wf()["jobs"]) == ["scan"]
+    assert "gh issue" not in WORKFLOW.read_text()
 
 
 # ── Semgrep (v11) ────────────────────────────────────────────────────────
@@ -64,12 +59,9 @@ def test_semgrep_inputs_reach_the_shell_through_env_only():
 def test_semgrep_flags():
     run = _semgrep()["run"]
     for flag in (
-        "--severity WARNING --severity ERROR",
-        "--error",
-        "--metrics=off",
+        "--severity WARNING --severity ERROR", "--error", "--metrics=off",
         # No inline or ignore-file waivers: only the exception file waives.
-        "--disable-nosem",
-        "--x-ignore-semgrepignore-files",
+        "--disable-nosem", "--x-ignore-semgrepignore-files",
         '--json-output "$SEMGREP_JSON"',
     ):
         assert flag in run, flag
@@ -94,7 +86,7 @@ def test_semgrep_waivers_come_from_the_exception_file():
 def test_semgrep_fails_closed_on_any_exit_but_clean_or_findings():
     run = _semgrep()["run"]
     assert "0|1) ;;" in run
-    assert '*) echo "::error::semgrep exited $rc' in run
+    assert "*) echo \"::error::semgrep exited $rc" in run
 
 
 def test_semgrep_is_in_the_verdict():
