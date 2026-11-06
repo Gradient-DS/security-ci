@@ -13,6 +13,7 @@ changes nothing without --apply:
 archives the repo instead of labelling it. After the first run the properties on
 GitHub are the record; the nightly audit reads them there.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,8 +38,7 @@ def gh(*args: str, body: dict | None = None, apply: bool = True) -> object:
     if not apply:
         print("  would run:", " ".join(cmd), json.dumps(body) if body is not None else "")
         return None
-    out = subprocess.run(cmd, input=json.dumps(body) if body is not None else None,
-                         capture_output=True, text=True)
+    out = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True)
     if out.returncode != 0:
         sys.exit(f"gh {' '.join(args)} failed: {out.stderr.strip() or out.stdout.strip()}")
     return json.loads(out.stdout) if out.stdout.strip() else None
@@ -57,9 +57,7 @@ def label_batches(labels: dict[str, dict]) -> list[tuple[dict[str, str], list[st
         key = tuple(sorted(props.items()))
         groups.setdefault(key, []).append(repo)
     return [
-        (dict(key), repos[i:i + BATCH])
-        for key, repos in sorted(groups.items())
-        for i in range(0, len(repos), BATCH)
+        (dict(key), repos[i : i + BATCH]) for key, repos in sorted(groups.items()) for i in range(0, len(repos), BATCH)
     ]
 
 
@@ -70,14 +68,16 @@ def checks_ruleset(contexts: list[str]) -> dict:
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
         "bypass_actors": [{"actor_id": None, "actor_type": "OrganizationAdmin", "bypass_mode": "always"}],
-        "rules": [{
-            "type": "required_status_checks",
-            "parameters": {
-                "strict_required_status_checks_policy": False,
-                "do_not_enforce_on_create": True,
-                "required_status_checks": [{"context": c, "integration_id": GITHUB_ACTIONS} for c in contexts],
-            },
-        }],
+        "rules": [
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": False,
+                    "do_not_enforce_on_create": True,
+                    "required_status_checks": [{"context": c, "integration_id": GITHUB_ACTIONS} for c in contexts],
+                },
+            }
+        ],
     }
 
 
@@ -97,8 +97,7 @@ def cmd_properties(args: argparse.Namespace) -> None:
         gh("-X", "PUT", f"orgs/{ORG}/properties/schema/{name}", body=schema, apply=args.apply)
     for props, repos in label_batches(json.loads(Path(args.labels).read_text())):
         print(f"set {props} on {', '.join(repos)}")
-        body = {"repository_names": repos,
-                "properties": [{"property_name": k, "value": v} for k, v in props.items()]}
+        body = {"repository_names": repos, "properties": [{"property_name": k, "value": v} for k, v in props.items()]}
         gh("-X", "PATCH", f"orgs/{ORG}/properties/values", body=body, apply=args.apply)
 
 
@@ -117,15 +116,19 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     """Remove every repo ruleset except `checks`, and classic branch protection."""
     listing = subprocess.run(
         ["gh", "api", "--paginate", f"orgs/{ORG}/repos", "--jq", ".[] | select(.archived | not) | .name"],
-        capture_output=True, text=True, check=True)
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     for repo in listing.stdout.split():
         for rs in gh(f"repos/{ORG}/{repo}/rulesets") or []:
             if rs.get("source_type") == "Repository" and rs["name"] != CHECKS_RULESET:
                 print(f"delete {repo} ruleset {rs['name']} ({rs['id']})")
                 gh("-X", "DELETE", f"repos/{ORG}/{repo}/rulesets/{rs['id']}", apply=args.apply)
         default = gh(f"repos/{ORG}/{repo}")["default_branch"]
-        probe = subprocess.run(["gh", "api", f"repos/{ORG}/{repo}/branches/{default}/protection"],
-                               capture_output=True, text=True)
+        probe = subprocess.run(
+            ["gh", "api", f"repos/{ORG}/{repo}/branches/{default}/protection"], capture_output=True, text=True
+        )
         if probe.returncode == 0:
             print(f"delete {repo} classic protection on {default}")
             gh("-X", "DELETE", f"repos/{ORG}/{repo}/branches/{default}/protection", apply=args.apply)
@@ -153,15 +156,15 @@ def permission(role_name: str) -> str:
 class OrgState:
     members: set[str]
     owners: set[str]
-    repos: list[str]                                              # non-archived
-    teams: dict[str, tuple[set[str], dict[str, str]]]             # slug -> (members, repo -> permission)
+    repos: list[str]  # non-archived
+    teams: dict[str, tuple[set[str], dict[str, str]]]  # slug -> (members, repo -> permission)
     direct: dict[str, dict[str, str]] = field(default_factory=dict)  # repo -> member login -> permission
 
 
 @dataclass(frozen=True)
 class Change:
-    kind: str     # create | add-member | remove-member | grant | revoke | prune-direct
-    team: str     # team slug; the user's login for prune-direct
+    kind: str  # create | add-member | remove-member | grant | revoke | prune-direct
+    team: str  # team slug; the user's login for prune-direct
     target: str = ""
     value: str = ""
 
@@ -211,10 +214,14 @@ def plan_teams(desired: dict[str, dict], state: OrgState) -> list[Change]:
         out += [Change("add-member", slug, m) for m in sorted(want - members, key=str.lower)]
         out += [Change("remove-member", slug, m) for m in sorted(members - want, key=str.lower)]
         want_repos = wanted_repos(spec, state)
-        out += [Change("grant", slug, r, p) for r, p in sorted(want_repos.items(), key=lambda kv: kv[0].lower())
-                if repos.get(r) != p]
-        out += [Change("revoke", slug, r) for r in sorted(repos, key=str.lower)
-                if r in state.repos and r not in want_repos]
+        out += [
+            Change("grant", slug, r, p)
+            for r, p in sorted(want_repos.items(), key=lambda kv: kv[0].lower())
+            if repos.get(r) != p
+        ]
+        out += [
+            Change("revoke", slug, r) for r in sorted(repos, key=str.lower) if r in state.repos and r not in want_repos
+        ]
     return out
 
 
@@ -243,26 +250,39 @@ def gh_items(path: str) -> list[dict]:
 def fetch_state(desired: dict[str, dict], with_direct: bool) -> OrgState:
     existing = {t["slug"] for t in gh_items(f"orgs/{ORG}/teams")}
     teams = {
-        slug: ({u["login"] for u in gh_items(f"orgs/{ORG}/teams/{slug}/members")},
-               {r["name"]: permission(r["role_name"]) for r in gh_items(f"orgs/{ORG}/teams/{slug}/repos")})
+        slug: (
+            {u["login"] for u in gh_items(f"orgs/{ORG}/teams/{slug}/members")},
+            {r["name"]: permission(r["role_name"]) for r in gh_items(f"orgs/{ORG}/teams/{slug}/repos")},
+        )
         for slug in sorted(existing & set(desired))
     }
     repos = sorted((r["name"] for r in gh_items(f"orgs/{ORG}/repos?type=all") if not r["archived"]), key=str.lower)
-    state = OrgState(members={u["login"] for u in gh_items(f"orgs/{ORG}/members")},
-                     owners={u["login"] for u in gh_items(f"orgs/{ORG}/members?role=admin")},
-                     repos=repos, teams=teams)
+    state = OrgState(
+        members={u["login"] for u in gh_items(f"orgs/{ORG}/members")},
+        owners={u["login"] for u in gh_items(f"orgs/{ORG}/members?role=admin")},
+        repos=repos,
+        teams=teams,
+    )
     if with_direct:
-        state.direct = {r: {c["login"]: permission(c["role_name"])
-                            for c in gh_items(f"repos/{ORG}/{r}/collaborators?affiliation=direct")}
-                        for r in repos}
+        state.direct = {
+            r: {
+                c["login"]: permission(c["role_name"])
+                for c in gh_items(f"repos/{ORG}/{r}/collaborators?affiliation=direct")
+            }
+            for r in repos
+        }
     return state
 
 
 def apply_change(change: Change, desired: dict[str, dict]) -> None:
     team = f"orgs/{ORG}/teams/{change.team}"
     if change.kind == "create":
-        gh("-X", "POST", f"orgs/{ORG}/teams", body={
-            "name": change.team, "description": desired[change.team]["description"], "privacy": "closed"})
+        gh(
+            "-X",
+            "POST",
+            f"orgs/{ORG}/teams",
+            body={"name": change.team, "description": desired[change.team]["description"], "privacy": "closed"},
+        )
     elif change.kind == "add-member":
         gh("-X", "PUT", f"{team}/memberships/{change.target}", body={"role": "member"})
     elif change.kind == "remove-member":
@@ -321,19 +341,29 @@ def cmd_teams(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name, fn, labels in [("properties", cmd_properties, True), ("rulesets", cmd_rulesets, False),
-                             ("cleanup", cmd_cleanup, False), ("archive", cmd_archive, True),
-                             ("teams", cmd_teams, False)]:
+    for name, fn, labels in [
+        ("properties", cmd_properties, True),
+        ("rulesets", cmd_rulesets, False),
+        ("cleanup", cmd_cleanup, False),
+        ("archive", cmd_archive, True),
+        ("teams", cmd_teams, False),
+    ]:
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
         s.add_argument("--apply", action="store_true", help="make the changes (default: print them)")
         if labels:
             s.add_argument("--labels", required=True)
         if name == "teams":
-            s.add_argument("--prune-direct", action="store_true",
-                           help="also remove direct grants of org members that the teams cover")
-            s.add_argument("--grants-only", action="store_true",
-                           help="only add or correct repo grants of existing teams (the nightly sync)")
+            s.add_argument(
+                "--prune-direct",
+                action="store_true",
+                help="also remove direct grants of org members that the teams cover",
+            )
+            s.add_argument(
+                "--grants-only",
+                action="store_true",
+                help="only add or correct repo grants of existing teams (the nightly sync)",
+            )
     args = p.parse_args()
     args.fn(args)
 
