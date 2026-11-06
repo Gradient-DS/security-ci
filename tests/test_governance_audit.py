@@ -5,10 +5,11 @@ import json
 import pytest
 import yaml
 
+import scripts.governance_audit as audit
 from scripts.governance import ROOT, checks_ruleset
 from scripts.governance_audit import (
     MAX_PIN_AGE_DAYS, Repo, audit_repo, check_branch_model, check_drafts, check_exceptions, check_gate,
-    check_org_rulesets, check_production_rules, check_properties, check_security_ci, issue_title,
+    check_org_rulesets, check_production_rules, check_properties, check_security_ci,
     needs_draft_check, never_on_pr, skips_drafts, summary,
 )
 
@@ -233,8 +234,36 @@ def test_org_rulesets_drift_missing_and_unannounced():
 
 # --- reporting ---
 
-def test_issue_title_is_stable():
-    assert issue_title("AIRE") == "Governance audit: AIRE"
+def test_summary_has_one_findings_table_per_repo_with_findings():
+    results = {"a": (Repo("a", "development"), []), "B": (Repo("B", "production"), ["x", "y | z"]),
+               "c": (Repo("c", "production"), ["w"])}
+    findings = summary(results, []).split("## Findings")[1]
+    assert "### a" not in findings
+    assert findings.index("### B") < findings.index("### c")
+    assert "| x |" in findings and "| y \\| z |" in findings and "| w |" in findings
+
+
+def test_audit_reports_and_writes_nothing(monkeypatch, tmp_path, capsys):
+    calls = []
+
+    class FakeGitHub:
+        def __init__(self, _token):
+            pass
+
+        def paginate(self, path):
+            calls.append(("GET", path))
+            return []
+
+        def request(self, method, path, *a, **kw):
+            calls.append((method, path))
+            raise AssertionError(f"audit wrote {method} {path}")
+
+    monkeypatch.setattr(audit, "GitHub", FakeGitHub)
+    monkeypatch.setattr(audit, "token", lambda: "t")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
+    assert audit.main([]) == 0
+    assert all(m == "GET" for m, _ in calls)
+    assert "# Governance audit" in (tmp_path / "summary.md").read_text()
 
 
 def test_summary_lists_clean_development_repos_as_ready():
