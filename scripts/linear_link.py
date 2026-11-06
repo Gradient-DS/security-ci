@@ -3,6 +3,7 @@
 Reads the `pull_request` event from GITHUB_EVENT_PATH. A link is a magic word
 followed by a GRA ticket id, e.g. `Fixes GRA-123` or `Part of GRA-123`.
 """
+
 from __future__ import annotations
 
 import json

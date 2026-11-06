@@ -1,4 +1,5 @@
 """runtime-security's BUILD_TOKEN: optional, and only ever seen by the image build."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -7,9 +7,22 @@ import yaml
 
 from scripts.governance import ROOT, checks_ruleset
 from scripts.governance_audit import (
-    MAX_PIN_AGE_DAYS, Repo, audit_repo, check_branch_model, check_drafts, check_exceptions, check_gate,
-    check_org_rulesets, check_production_rules, check_properties, check_security_ci, issue_title,
-    needs_draft_check, never_on_pr, skips_drafts, summary,
+    MAX_PIN_AGE_DAYS,
+    Repo,
+    audit_repo,
+    check_branch_model,
+    check_drafts,
+    check_exceptions,
+    check_gate,
+    check_org_rulesets,
+    check_production_rules,
+    check_properties,
+    check_security_ci,
+    issue_title,
+    needs_draft_check,
+    never_on_pr,
+    skips_drafts,
+    summary,
 )
 
 TODAY = dt.date(2026, 10, 27)
@@ -34,6 +47,7 @@ def job(text):
 
 
 # --- draft classification ---
+
 
 def test_root_job_needs_the_draft_check():
     assert needs_draft_check({"runs-on": "x"})
@@ -93,17 +107,21 @@ def test_check_drafts_skips_closed_only_and_non_pr_workflows():
 
 # --- per-repo checks ---
 
+
 def test_properties():
     assert check_properties(Repo("r", "development", "gitflow")) == []
     assert len(check_properties(Repo("r", None, "trunk"))) == 2
 
 
-@pytest.mark.parametrize("repo, n", [
-    (Repo("r", branch_model="gitflow", default_branch="dev", branches={"test": True, "main": True}), 0),
-    (Repo("r", branch_model="gitflow", default_branch="main", branches={"main": True}), 2),
-    (Repo("r", branch_model="github-flow", default_branch="main", branches={"main": True}), 0),
-    (Repo("r", branch_model="github-flow", default_branch="dev", branches={"test": True}), 2),
-])
+@pytest.mark.parametrize(
+    "repo, n",
+    [
+        (Repo("r", branch_model="gitflow", default_branch="dev", branches={"test": True, "main": True}), 0),
+        (Repo("r", branch_model="gitflow", default_branch="main", branches={"main": True}), 2),
+        (Repo("r", branch_model="github-flow", default_branch="main", branches={"main": True}), 0),
+        (Repo("r", branch_model="github-flow", default_branch="dev", branches={"test": True}), 2),
+    ],
+)
 def test_branch_model(repo, n):
     assert len(check_branch_model(repo)) == n
 
@@ -151,13 +169,19 @@ def test_exceptions():
 
 
 def rule_checks(*contexts):
-    return [{"type": "required_status_checks",
-             "parameters": {"required_status_checks": [{"context": c} for c in contexts]}}]
+    return [
+        {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": c} for c in contexts]}}
+    ]
 
 
 def prod_repo(**kw):
-    base = dict(tier="production", branch_model="github-flow", default_branch="main",
-                rules={"main": rule_checks("gate", "test")}, rulesets=[checks_ruleset(["test"])])
+    base = dict(
+        tier="production",
+        branch_model="github-flow",
+        default_branch="main",
+        rules={"main": rule_checks("gate", "test")},
+        rulesets=[checks_ruleset(["test"])],
+    )
     return Repo("warren", **{**base, **kw})
 
 
@@ -169,18 +193,24 @@ def test_production_rules_drift():
     extra = copy.deepcopy(checks_ruleset(["test"]))
     extra["rules"].append({"type": "deletion"})
     findings = check_production_rules(
-        prod_repo(rules={"main": rule_checks("test")}, rulesets=[extra, {"name": "legacy"}],
-                  classic_protection=True),
-        {"warren": ["test", "lint"]})
+        prod_repo(rules={"main": rule_checks("test")}, rulesets=[extra, {"name": "legacy"}], classic_protection=True),
+        {"warren": ["test", "lint"]},
+    )
     text = "\n".join(findings)
-    for needle in ("require check `gate`", "`legacy` is not allowed", "only required_status_checks",
-                   "repo-checks.json lists", "classic branch protection"):
+    for needle in (
+        "require check `gate`",
+        "`legacy` is not allowed",
+        "only required_status_checks",
+        "repo-checks.json lists",
+        "classic branch protection",
+    ):
         assert needle in text
 
 
 def test_production_rules_gitflow_and_unlisted():
-    repo = prod_repo(branch_model="gitflow", default_branch="dev",
-                     rules={"dev": rule_checks("gate"), "main": rule_checks("gate")})
+    repo = prod_repo(
+        branch_model="gitflow", default_branch="dev", rules={"dev": rule_checks("gate"), "main": rule_checks("gate")}
+    )
     findings = check_production_rules(repo, {})
     assert any("promotion-guard" in f for f in findings)
     assert any("does not list this repo" in f for f in findings)
@@ -189,8 +219,13 @@ def test_production_rules_gitflow_and_unlisted():
 
 def test_audit_repo_by_tier():
     assert audit_repo(Repo("x", "experiment", "github-flow", branches={"test": True}), {}, {}, TODAY) == []
-    dev = Repo("x", "development", "github-flow", workflows={"s.yml": GOOD_WF},
-               gate=[{"status": "completed", "conclusion": "success"}])
+    dev = Repo(
+        "x",
+        "development",
+        "github-flow",
+        workflows={"s.yml": GOOD_WF},
+        gate=[{"status": "completed", "conclusion": "success"}],
+    )
     assert audit_repo(dev, {PIN: TODAY}, {}, TODAY) == []
     dev.errors.append("audit could not read branches (HTTP 403)")
     assert audit_repo(dev, {PIN: TODAY}, {}, TODAY) == dev.errors
@@ -203,6 +238,7 @@ def test_security_ci_need_not_call_itself():
 
 
 # --- org rulesets ---
+
 
 def expected_rulesets():
     return {p.stem: json.loads(p.read_text()) for p in (ROOT / "rulesets").glob("*.json")}
@@ -233,13 +269,17 @@ def test_org_rulesets_drift_missing_and_unannounced():
 
 # --- reporting ---
 
+
 def test_issue_title_is_stable():
     assert issue_title("AIRE") == "Governance audit: AIRE"
 
 
 def test_summary_lists_clean_development_repos_as_ready():
-    results = {"a": (Repo("a", "development"), []), "b": (Repo("b", "development"), ["x"]),
-               "c": (Repo("c", "production"), [])}
+    results = {
+        "a": (Repo("a", "development"), []),
+        "b": (Repo("b", "development"), ["x"]),
+        "c": (Repo("c", "production"), []),
+    }
     text = summary(results, [])
     ready = text.split("## Ready for production")[1].split("##")[0]
     assert "- a" in ready and "- b" not in ready and "- c" not in ready
@@ -256,7 +296,11 @@ def test_org_rulesets_read_through_a_repo_are_compared_on_the_rest():
 
 
 def test_template_projects_reach_security_ci_through_the_template():
-    wf = {"jobs": {"security": {"uses": "Gradient-DS/soev-project-template/.github/workflows/project-security.yml@v0.3.1"}}}
+    wf = {
+        "jobs": {
+            "security": {"uses": "Gradient-DS/soev-project-template/.github/workflows/project-security.yml@v0.3.1"}
+        }
+    }
     assert check_security_ci({"security.yml": wf}, {}, TODAY) == []
 
 

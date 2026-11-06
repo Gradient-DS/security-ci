@@ -151,9 +151,7 @@ def check(path: Path) -> Result:
 
 def tracked_files(root: Path) -> list[Path]:
     """Return the files git tracks under `root`, so untracked checkouts (tooling, node_modules) are ignored."""
-    out = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True, text=True
-    ).stdout
+    out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True, text=True).stdout
     return [root / p for p in out.split("\0") if p]
 
 

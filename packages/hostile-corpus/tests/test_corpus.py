@@ -20,11 +20,11 @@ def test_cross_product_is_complete():
 
 def test_covers_the_classes_that_burned_us():
     joined = " ".join(fetch_payloads())
-    assert "169.254.169.254" in joined       # cloud metadata
-    assert "file:///etc/passwd" in joined    # LFI
-    assert "<img" in joined                  # stored HTML into a renderer
-    assert "![" in joined                    # stored markdown into a renderer
-    assert CANARY_HOST in joined             # OAST-style unique host
+    assert "169.254.169.254" in joined  # cloud metadata
+    assert "file:///etc/passwd" in joined  # LFI
+    assert "<img" in joined  # stored HTML into a renderer
+    assert "![" in joined  # stored markdown into a renderer
+    assert CANARY_HOST in joined  # OAST-style unique host
 
 
 def test_every_payload_carries_the_reflection_probe():

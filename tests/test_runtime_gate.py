@@ -65,12 +65,9 @@ def test_a_failure_outside_the_filter_still_fails(result):
 
 
 def test_cli_exit_codes():
-    assert main(["--relevant", "true", "--event", "pull_request",
-                 "--audit-result", "success"]) == 0
-    assert main(["--relevant", "true", "--event", "pull_request",
-                 "--audit-result", "failure"]) == 1
-    assert main(["--relevant", "false", "--event", "pull_request",
-                 "--audit-result", "skipped"]) == 0
+    assert main(["--relevant", "true", "--event", "pull_request", "--audit-result", "success"]) == 0
+    assert main(["--relevant", "true", "--event", "pull_request", "--audit-result", "failure"]) == 1
+    assert main(["--relevant", "false", "--event", "pull_request", "--audit-result", "skipped"]) == 0
 
 
 @pytest.mark.parametrize("event", EVENTS)

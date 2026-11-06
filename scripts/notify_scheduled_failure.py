@@ -6,6 +6,7 @@ one thread instead of opening a new issue every Monday. Do not make the title
 vary per run, and do not add characters that would need escaping in a jq
 comparison.
 """
+
 from __future__ import annotations
 
 TITLE_PREFIX = "Scheduled security scan failing"
@@ -35,8 +36,7 @@ def image_issue_title(repo: str, image_name: str) -> str:
     return f"{IMAGE_TITLE_PREFIX}: {repo} / {image_name}"
 
 
-def image_issue_body(repo: str, image_name: str, image: str, run_url: str,
-                     failed_scanners: list[str]) -> str:
+def image_issue_body(repo: str, image_name: str, image: str, run_url: str, failed_scanners: list[str]) -> str:
     scanners = "\n".join(f"- `{s}`" for s in failed_scanners) if failed_scanners else "- (see run)"
     return (
         f"The scheduled image scan of **{image_name}** in **{repo}** failed.\n\n"

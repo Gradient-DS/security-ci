@@ -122,9 +122,7 @@ def writable_string_fields(openapi: dict) -> dict[str, list[str]]:
         for method, operation in operations.items():
             if method.lower() in _READ_METHODS or not isinstance(operation, dict):
                 continue
-            content = (
-                (operation.get("requestBody") or {}).get("content") or {}
-            ).get("application/json") or {}
+            content = ((operation.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
             fields = sorted({path for path, _ in _walk(content.get("schema", {}), openapi, "", frozenset())})
             if fields:
                 result[f"{method.upper()} {path}"] = fields
@@ -142,7 +140,14 @@ def query_parameters(openapi: dict) -> dict[str, list[str]]:
     for path, operations in (openapi.get("paths") or {}).items():
         for method, operation in operations.items():
             if method.lower() not in {
-                "get", "put", "post", "delete", "options", "head", "patch", "trace",
+                "get",
+                "put",
+                "post",
+                "delete",
+                "options",
+                "head",
+                "patch",
+                "trace",
             } or not isinstance(operation, dict):
                 continue
             names: set[str] = set()
@@ -249,9 +254,7 @@ def _skeleton(schema: dict, doc: dict, prefix: str, wanted: frozenset[str], seen
     return _SCALARS.get(schema.get("type"), "")
 
 
-def _planted_properties(
-    schema: dict, doc: dict, prefix: str, wanted: frozenset[str], seen: frozenset[int]
-) -> dict:
+def _planted_properties(schema: dict, doc: dict, prefix: str, wanted: frozenset[str], seen: frozenset[int]) -> dict:
     properties = schema.get("properties") or {}
     required = set(schema.get("required") or [])
     built = {}
@@ -307,12 +310,7 @@ def body_skeletons(openapi: dict) -> dict[str, Any]:
 
 
 def _is_constrained(leaf: dict) -> bool:
-    return bool(
-        leaf.get("enum")
-        or "const" in leaf
-        or leaf.get("pattern")
-        or leaf.get("format") in _FORMAT_VALUES
-    )
+    return bool(leaf.get("enum") or "const" in leaf or leaf.get("pattern") or leaf.get("format") in _FORMAT_VALUES)
 
 
 def constrained_string_fields(openapi: dict) -> dict[str, list[str]]:
@@ -333,14 +331,14 @@ def constrained_string_fields(openapi: dict) -> dict[str, list[str]]:
         for method, operation in operations.items():
             if method.lower() in _READ_METHODS or not isinstance(operation, dict):
                 continue
-            content = (
-                (operation.get("requestBody") or {}).get("content") or {}
-            ).get("application/json") or {}
-            fields = sorted({
-                field
-                for field, leaf in _walk(content.get("schema", {}), openapi, "", frozenset())
-                if _is_constrained(leaf)
-            })
+            content = ((operation.get("requestBody") or {}).get("content") or {}).get("application/json") or {}
+            fields = sorted(
+                {
+                    field
+                    for field, leaf in _walk(content.get("schema", {}), openapi, "", frozenset())
+                    if _is_constrained(leaf)
+                }
+            )
             if fields:
                 result[f"{method.upper()} {path}"] = fields
     return result

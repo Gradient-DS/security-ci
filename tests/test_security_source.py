@@ -1,4 +1,5 @@
 """Wiring of the reusable source-scan workflow's scheduled-failure notifier."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,9 +64,12 @@ def test_semgrep_inputs_reach_the_shell_through_env_only():
 def test_semgrep_flags():
     run = _semgrep()["run"]
     for flag in (
-        "--severity WARNING --severity ERROR", "--error", "--metrics=off",
+        "--severity WARNING --severity ERROR",
+        "--error",
+        "--metrics=off",
         # No inline or ignore-file waivers: only the exception file waives.
-        "--disable-nosem", "--x-ignore-semgrepignore-files",
+        "--disable-nosem",
+        "--x-ignore-semgrepignore-files",
         '--json-output "$SEMGREP_JSON"',
     ):
         assert flag in run, flag
@@ -90,7 +94,7 @@ def test_semgrep_waivers_come_from_the_exception_file():
 def test_semgrep_fails_closed_on_any_exit_but_clean_or_findings():
     run = _semgrep()["run"]
     assert "0|1) ;;" in run
-    assert "*) echo \"::error::semgrep exited $rc" in run
+    assert '*) echo "::error::semgrep exited $rc' in run
 
 
 def test_semgrep_is_in_the_verdict():

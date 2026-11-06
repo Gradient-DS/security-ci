@@ -5,6 +5,7 @@ trusts a marker only if the run that uploaded it was such a run, of the same
 workflow file. Anything unexpected in a record is a miss; an API error is a
 failure, never a silent miss.
 """
+
 from __future__ import annotations
 
 import json
@@ -51,7 +52,7 @@ def workflow_path(workflow_ref: str, repo: str) -> str:
     prefix = f"{repo}/"
     if not workflow_ref.startswith(prefix) or "@" not in workflow_ref:
         raise TestedTreeError(f"unexpected github.workflow_ref '{workflow_ref}'")
-    return workflow_ref[len(prefix):].rsplit("@", 1)[0]
+    return workflow_ref[len(prefix) :].rsplit("@", 1)[0]
 
 
 def same_repo_pull_request(event_name: str, event: dict, repo: str) -> tuple[bool, str]:
@@ -66,8 +67,9 @@ def same_repo_pull_request(event_name: str, event: dict, repo: str) -> tuple[boo
     return True, "same-repository pull request"
 
 
-def record(api: Api, *, repo: str, key: str, sha: str, event_name: str, event: dict,
-           record_file: Path, run_url: str) -> dict[str, str]:
+def record(
+    api: Api, *, repo: str, key: str, sha: str, event_name: str, event: dict, record_file: Path, run_url: str
+) -> dict[str, str]:
     check_key(key)
     ok, why = same_repo_pull_request(event_name, event, repo)
     if not ok:
@@ -120,8 +122,7 @@ def trust(api: Api, repo: str, artifact: dict, wf_path: str) -> tuple[bool, str]
     return True, f"run {run_id}"
 
 
-def check(api: Api, *, repo: str, key: str, sha: str, workflow_ref: str,
-          server_url: str) -> dict[str, str]:
+def check(api: Api, *, repo: str, key: str, sha: str, workflow_ref: str, server_url: str) -> dict[str, str]:
     check_key(key)
     wf_path = workflow_path(workflow_ref, repo)
     tree = resolve_tree(api, repo, sha)
@@ -150,14 +151,29 @@ def main(argv: list[str]) -> int:
     try:
         if argv == ["record"]:
             event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
-            run_url = (f"{env['GITHUB_SERVER_URL']}/{repo}/actions/runs/"
-                       f"{env['GITHUB_RUN_ID']}/attempts/{env['GITHUB_RUN_ATTEMPT']}")
-            out = record(gh_api, repo=repo, key=env["KEY"], sha=env["SHA"],
-                         event_name=env["GITHUB_EVENT_NAME"], event=event,
-                         record_file=Path(env["RECORD_DIR"]) / "tested-tree.txt", run_url=run_url)
+            run_url = (
+                f"{env['GITHUB_SERVER_URL']}/{repo}/actions/runs/"
+                f"{env['GITHUB_RUN_ID']}/attempts/{env['GITHUB_RUN_ATTEMPT']}"
+            )
+            out = record(
+                gh_api,
+                repo=repo,
+                key=env["KEY"],
+                sha=env["SHA"],
+                event_name=env["GITHUB_EVENT_NAME"],
+                event=event,
+                record_file=Path(env["RECORD_DIR"]) / "tested-tree.txt",
+                run_url=run_url,
+            )
         elif argv == ["check"]:
-            out = check(gh_api, repo=repo, key=env["KEY"], sha=env["SHA"],
-                        workflow_ref=env["WORKFLOW_REF"], server_url=env["GITHUB_SERVER_URL"])
+            out = check(
+                gh_api,
+                repo=repo,
+                key=env["KEY"],
+                sha=env["SHA"],
+                workflow_ref=env["WORKFLOW_REF"],
+                server_url=env["GITHUB_SERVER_URL"],
+            )
             if out["hit"] == "true":
                 print(f"Tree {out['tree']} was tested for '{env['KEY']}' by {out['run-url']}")
                 with open(env["GITHUB_STEP_SUMMARY"], "a") as fh:

@@ -61,4 +61,8 @@ def test_label_batches_skip_archive_and_respect_the_api_limit():
 
 def test_development_blocks_deletion_force_push_and_direct_push():
     assert [r["type"] for r in rulesets()["development"]["rules"]] == [
-        "deletion", "non_fast_forward", "pull_request", "required_status_checks"]
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+    ]

@@ -26,6 +26,7 @@ and every fingerprint in the list is suppressed by it; each still has to be
 unique across the file. Only gitleaks supports this: a CVE id names a
 finding on its own, so grouping would hide which advisory a reason covers.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,8 +40,14 @@ from pathlib import Path, PurePosixPath
 import yaml
 
 REQUIRED_FIELDS: tuple[str, ...] = (
-    "id", "package", "scanner", "reason",
-    "replacement_considered", "usage_analysis", "approved_by", "recheck",
+    "id",
+    "package",
+    "scanner",
+    "reason",
+    "replacement_considered",
+    "usage_analysis",
+    "approved_by",
+    "recheck",
 )
 # `paths` is the one OPTIONAL field. It scopes a trivy exception to the files
 # that actually produce the finding, so a new offending file elsewhere in the
@@ -153,10 +160,7 @@ def _parse_paths(entry: dict, path: Path, index: int) -> tuple[str, ...]:
     out: list[str] = []
     for value in raw:
         if not isinstance(value, str) or not value.strip():
-            raise ExceptionFileError(
-                f"{path}: entry {index} has a non-string or empty entry in "
-                f"'paths': {value!r}"
-            )
+            raise ExceptionFileError(f"{path}: entry {index} has a non-string or empty entry in 'paths': {value!r}")
         if value != value.strip() or any(c in value for c in "\n\r\t"):
             raise ExceptionFileError(
                 f"{path}: entry {index} path {value!r} has leading or trailing "
@@ -173,8 +177,7 @@ def _parse_paths(entry: dict, path: Path, index: int) -> tuple[str, ...]:
             )
         if value.startswith("/") or ".." in PurePosixPath(value).parts:
             raise ExceptionFileError(
-                f"{path}: entry {index} path {value!r} must be relative to the "
-                f"{root}, with no '..' segments"
+                f"{path}: entry {index} path {value!r} must be relative to the {root}, with no '..' segments"
             )
         out.append(value)
     return tuple(out)
@@ -209,10 +212,7 @@ def _parse_ids(entry: dict, path: Path, index: int) -> tuple[str, ...]:
     out: list[str] = []
     for value in raw:
         if not isinstance(value, str) or not value.strip():
-            raise ExceptionFileError(
-                f"{path}: entry {index} has a non-string or empty entry in "
-                f"'ids': {value!r}"
-            )
+            raise ExceptionFileError(f"{path}: entry {index} has a non-string or empty entry in 'ids': {value!r}")
         out.append(value)
     return tuple(out)
 
@@ -229,14 +229,9 @@ def load(path: str | Path) -> list[SecurityException]:
     seen: set[str] = set()
     for i, entry in enumerate(entries):
         ids = _parse_ids(entry, path, i)
-        missing = [
-            f for f in REQUIRED_FIELDS
-            if not str(entry.get(f, "")).strip() and not (f == "id" and ids)
-        ]
+        missing = [f for f in REQUIRED_FIELDS if not str(entry.get(f, "")).strip() and not (f == "id" and ids)]
         if missing:
-            raise ExceptionFileError(
-                f"{path}: entry {i} is missing required field(s): {', '.join(missing)}"
-            )
+            raise ExceptionFileError(f"{path}: entry {i} is missing required field(s): {', '.join(missing)}")
         if entry["scanner"] not in VALID_SCANNERS:
             raise ExceptionFileError(
                 f"{path}: entry {i} has unknown scanner {entry['scanner']!r}; "
@@ -244,8 +239,7 @@ def load(path: str | Path) -> list[SecurityException]:
             )
         if not isinstance(entry["recheck"], dt.date):
             raise ExceptionFileError(
-                f"{path}: entry {i} field 'recheck' must be a YAML date "
-                f"(YYYY-MM-DD), got {entry['recheck']!r}"
+                f"{path}: entry {i} field 'recheck' must be a YAML date (YYYY-MM-DD), got {entry['recheck']!r}"
             )
         # Each id is validated against the pattern for ITS OWN scanner.
         # gitleaks fingerprints legitimately contain ':' and '/', which
@@ -260,8 +254,7 @@ def load(path: str | Path) -> list[SecurityException]:
         elif entry["scanner"] == "semgrep":
             id_pattern = SEMGREP_ID_PATTERN
             id_pattern_desc = (
-                "a semgrep rule id: letters, digits, dot, underscore, hyphen, "
-                "starting with a letter or digit"
+                "a semgrep rule id: letters, digits, dot, underscore, hyphen, starting with a letter or digit"
             )
         else:
             id_pattern = ID_PATTERN
@@ -269,7 +262,7 @@ def load(path: str | Path) -> list[SecurityException]:
         # An `ids` entry expands to one SecurityException per fingerprint,
         # sharing every other field, so the emitters and the duplicate check
         # need no knowledge of grouping.
-        for one_id in (ids or (str(entry["id"]),)):
+        for one_id in ids or (str(entry["id"]),):
             if not id_pattern.fullmatch(one_id):
                 raise ExceptionFileError(
                     f"{path}: entry {i} has invalid id {one_id!r}; ids must match "
@@ -279,17 +272,19 @@ def load(path: str | Path) -> list[SecurityException]:
                 raise ExceptionFileError(f"{path}: duplicate exception id {one_id!r}")
             seen.add(one_id)
 
-            out.append(SecurityException(
-                paths=_parse_paths(entry, path, i),
-                id=one_id,
-                package=entry["package"],
-                scanner=entry["scanner"],
-                reason=entry["reason"],
-                replacement_considered=entry["replacement_considered"],
-                usage_analysis=entry["usage_analysis"],
-                approved_by=entry["approved_by"],
-                recheck=entry["recheck"],
-            ))
+            out.append(
+                SecurityException(
+                    paths=_parse_paths(entry, path, i),
+                    id=one_id,
+                    package=entry["package"],
+                    scanner=entry["scanner"],
+                    reason=entry["reason"],
+                    replacement_considered=entry["replacement_considered"],
+                    usage_analysis=entry["usage_analysis"],
+                    approved_by=entry["approved_by"],
+                    recheck=entry["recheck"],
+                )
+            )
     return out
 
 
@@ -333,12 +328,8 @@ def semgrep_unexcepted(report: dict, excs: list[SecurityException]) -> list[str]
     honest when called on its own.
     """
     if not isinstance(report, dict) or not isinstance(report.get("results"), list):
-        raise SemgrepReportError(
-            "semgrep produced no 'results' list -- nothing was scanned, failing closed"
-        )
-    scoped = {
-        (e.id, p) for e in excs if e.scanner == "semgrep" for p in e.paths
-    }
+        raise SemgrepReportError("semgrep produced no 'results' list -- nothing was scanned, failing closed")
+    scoped = {(e.id, p) for e in excs if e.scanner == "semgrep" for p in e.paths}
     found: list[str] = []
     for result in report["results"]:
         if not isinstance(result, dict):
@@ -384,10 +375,7 @@ def _statement(e: SecurityException) -> str:
     Mirrors the comment the plain format carries, collapsed to one line so it
     cannot break the YAML document.
     """
-    return " ".join(
-        f"{e.package}: {e.reason} (approved by {e.approved_by}, "
-        f"recheck {e.recheck})".split()
-    )
+    return " ".join(f"{e.package}: {e.reason} (approved by {e.approved_by}, recheck {e.recheck})".split())
 
 
 def trivyignore_yaml_text(excs: list[SecurityException]) -> str:
@@ -403,6 +391,7 @@ def trivyignore_yaml_text(excs: list[SecurityException]) -> str:
     classifier over id shapes would fail silently in both directions. An id
     under a kind it can never match is simply inert.
     """
+
     def _yaml_entry(e: SecurityException) -> dict:
         # Built fresh per kind, never shared: two dicts pointing at one list
         # is what makes PyYAML emit an alias.
@@ -512,8 +501,7 @@ def npm_unexcepted(audit_json: dict, excs: list[SecurityException]) -> list[str]
             else:
                 detail = f": {err!r}"
         raise NpmAuditError(
-            "npm audit produced no 'vulnerabilities' report — nothing was "
-            f"audited, failing closed{detail}"
+            f"npm audit produced no 'vulnerabilities' report — nothing was audited, failing closed{detail}"
         )
 
     allowed = {e.id for e in excs if e.scanner == "npm"}
@@ -530,7 +518,7 @@ def npm_unexcepted(audit_json: dict, excs: list[SecurityException]) -> list[str]
         if not ids:
             ids = [f"{NPM_PACKAGE_PREFIX}{pkg}"]
         for aid in ids:
-            bare = aid[len(NPM_PACKAGE_PREFIX):] if aid.startswith(NPM_PACKAGE_PREFIX) else aid
+            bare = aid[len(NPM_PACKAGE_PREFIX) :] if aid.startswith(NPM_PACKAGE_PREFIX) else aid
             if aid in allowed or bare in allowed or aid in found:
                 continue
             found.append(aid)
@@ -592,8 +580,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             report = json.loads(Path(args.semgrep_json).read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"::error::cannot read semgrep report {args.semgrep_json}: {exc}",
-                  file=sys.stderr)
+            print(f"::error::cannot read semgrep report {args.semgrep_json}: {exc}", file=sys.stderr)
             return 1
         try:
             blocking = semgrep_unexcepted(report, excs)
@@ -609,8 +596,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             audit = json.loads(Path(args.npm_audit_json).read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"::error::cannot read npm audit report {args.npm_audit_json}: {exc}",
-                  file=sys.stderr)
+            print(f"::error::cannot read npm audit report {args.npm_audit_json}: {exc}", file=sys.stderr)
             return 1
         try:
             blocking = npm_unexcepted(audit, excs)
@@ -618,8 +604,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"::error::{exc}", file=sys.stderr)
             return 1
         for aid in blocking:
-            print(f"::error::npm finding {aid} is high or critical and has no exception.",
-                  file=sys.stderr)
+            print(f"::error::npm finding {aid} is high or critical and has no exception.", file=sys.stderr)
         if blocking:
             return 1
 

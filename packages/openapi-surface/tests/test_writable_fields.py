@@ -18,8 +18,11 @@ def test_a_flat_string_field_is_writable():
     doc = {
         "paths": {
             "/api/message": {
-                "post": {"requestBody": {"content": {"application/json": {
-                    "schema": {"properties": {"content": {"type": "string"}}}}}}}
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"properties": {"content": {"type": "string"}}}}}
+                    }
+                }
             }
         }
     }
@@ -30,38 +33,68 @@ def test_refs_are_resolved_and_nesting_is_not_a_hiding_place():
     doc = {
         "paths": {
             "/api/message": {
-                "post": {"requestBody": {"content": {"application/json": {
-                    "schema": {"$ref": "#/components/schemas/Message"}}}}},
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}
+                    }
+                },
                 "get": {},
             }
         },
-        "components": {"schemas": {"Message": {"properties": {
-            "content": {"type": "string"},
-            "meta": {"properties": {"title": {"type": "string"}}},
-            "count": {"type": "integer"},
-        }}}},
+        "components": {
+            "schemas": {
+                "Message": {
+                    "properties": {
+                        "content": {"type": "string"},
+                        "meta": {"properties": {"title": {"type": "string"}}},
+                        "count": {"type": "integer"},
+                    }
+                }
+            }
+        },
     }
-    assert writable_string_fields(doc) == {
-        "POST /api/message": ["content", "meta.title"]
-    }
+    assert writable_string_fields(doc) == {"POST /api/message": ["content", "meta.title"]}
 
 
 def test_arrays_of_strings_are_writable():
     doc = {
-        "paths": {"/api/bulk": {"post": {"requestBody": {"content": {
-            "application/json": {"schema": {"properties": {
-                "ids": {"type": "array", "items": {"type": "string"}}}}}}}}}}
+        "paths": {
+            "/api/bulk": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"properties": {"ids": {"type": "array", "items": {"type": "string"}}}}
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     assert writable_string_fields(doc) == {"POST /api/bulk": ["ids[]"]}
 
 
 def test_combinators_are_walked():
     doc = {
-        "paths": {"/api/x": {"post": {"requestBody": {"content": {
-            "application/json": {"schema": {"anyOf": [
-                {"properties": {"a": {"type": "string"}}},
-                {"properties": {"b": {"type": "string"}}},
-            ]}}}}}}}
+        "paths": {
+            "/api/x": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "anyOf": [
+                                        {"properties": {"a": {"type": "string"}}},
+                                        {"properties": {"b": {"type": "string"}}},
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     assert writable_string_fields(doc) == {"POST /api/x": ["a", "b"]}
 
@@ -70,12 +103,23 @@ def test_ref_cycles_terminate():
     """SpecTree emits self-referential schemas for tree-shaped models; a naive
     walk recurses forever and the suite hangs rather than fails."""
     doc = {
-        "paths": {"/api/tree": {"post": {"requestBody": {"content": {
-            "application/json": {"schema": {"$ref": "#/components/schemas/Node"}}}}}}},
-        "components": {"schemas": {"Node": {"properties": {
-            "name": {"type": "string"},
-            "child": {"$ref": "#/components/schemas/Node"},
-        }}}},
+        "paths": {
+            "/api/tree": {
+                "post": {
+                    "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Node"}}}}
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "Node": {
+                    "properties": {
+                        "name": {"type": "string"},
+                        "child": {"$ref": "#/components/schemas/Node"},
+                    }
+                }
+            }
+        },
     }
     assert writable_string_fields(doc)["POST /api/tree"] == ["name"]
 
@@ -87,21 +131,37 @@ def test_optional_nested_model_is_not_mistaken_for_a_string_leaf():
     -- so a leaf check that fires before combinators are considered mistakes
     the whole property for an untyped string and never looks inside it."""
     doc = {
-        "paths": {"/api/profile": {"post": {"requestBody": {"content": {
-            "application/json": {"schema": {"properties": {
-                "name": {"type": "string"},
-                "address": {"anyOf": [
-                    {"type": "object", "properties": {
-                        "street": {"type": "string"},
-                        "city": {"type": "string"},
-                    }},
-                    {"type": "null"},
-                ]},
-            }}}}}}}}
+        "paths": {
+            "/api/profile": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "address": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "street": {"type": "string"},
+                                                        "city": {"type": "string"},
+                                                    },
+                                                },
+                                                {"type": "null"},
+                                            ]
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
-    assert writable_string_fields(doc) == {
-        "POST /api/profile": ["address.city", "address.street", "name"]
-    }
+    assert writable_string_fields(doc) == {"POST /api/profile": ["address.city", "address.street", "name"]}
 
 
 def test_optional_array_of_models_is_not_mistaken_for_a_string_leaf():
@@ -109,25 +169,51 @@ def test_optional_array_of_models_is_not_mistaken_for_a_string_leaf():
     ``anyOf: [array-of-Model, null]``, so the array-items branch needs the
     same combinator-aware leaf check as the properties branch does."""
     doc = {
-        "paths": {"/api/profile": {"post": {"requestBody": {"content": {
-            "application/json": {"schema": {"properties": {
-                "addresses": {"anyOf": [
-                    {"type": "array", "items": {"type": "object", "properties": {
-                        "street": {"type": "string"},
-                    }}},
-                    {"type": "null"},
-                ]},
-            }}}}}}}}
+        "paths": {
+            "/api/profile": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "addresses": {
+                                            "anyOf": [
+                                                {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "street": {"type": "string"},
+                                                        },
+                                                    },
+                                                },
+                                                {"type": "null"},
+                                            ]
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
-    assert writable_string_fields(doc) == {
-        "POST /api/profile": ["addresses[].street"]
-    }
+    assert writable_string_fields(doc) == {"POST /api/profile": ["addresses[].street"]}
 
 
 def test_read_methods_are_skipped():
     doc = {
-        "paths": {"/api/x": {"get": {"requestBody": {"content": {
-            "application/json": {"schema": {"properties": {"a": {"type": "string"}}}}}}}}}
+        "paths": {
+            "/api/x": {
+                "get": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"properties": {"a": {"type": "string"}}}}}
+                    }
+                }
+            }
+        }
     }
     assert writable_string_fields(doc) == {}
 

@@ -14,6 +14,7 @@ Two properties are tested here, and they pull in opposite directions:
                root commits and content deleted long ago. The bug must not be
                "fixed" by degrading the scan to the PR diff.
 """
+
 from __future__ import annotations
 
 import random
@@ -52,9 +53,9 @@ def _repo_checkout_step() -> dict:
     """The checkout of the CALLER's repository — the first checkout in the job.
     The later one fetches the shared tooling into a subdirectory."""
     checkouts = [
-        s for s in _secrets_steps()
-        if str(s.get("uses", "")).startswith("actions/checkout")
-        and "repository" not in (s.get("with") or {})
+        s
+        for s in _secrets_steps()
+        if str(s.get("uses", "")).startswith("actions/checkout") and "repository" not in (s.get("with") or {})
     ]
     assert len(checkouts) == 1, f"expected one caller checkout, found {len(checkouts)}"
     return checkouts[0]
@@ -62,10 +63,7 @@ def _repo_checkout_step() -> dict:
 
 def _script_lines(step: dict) -> list[str]:
     """The step's run script with comment and blank lines dropped."""
-    return [
-        ln for ln in step["run"].splitlines()
-        if ln.strip() and not ln.strip().startswith("#")
-    ]
+    return [ln for ln in step["run"].splitlines() if ln.strip() and not ln.strip().startswith("#")]
 
 
 def test_scan_step_pins_the_scan_to_head():
@@ -108,7 +106,9 @@ def test_scan_step_still_fails_the_job_on_a_finding():
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
-        cwd=repo, check=True, capture_output=True,
+        cwd=repo,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -129,13 +129,29 @@ def _commit_secret(repo: Path, name: str, seed: int) -> None:
 def _scan(repo: Path, empty_ignore: Path, *extra: str) -> int:
     """Number of leaks gitleaks reports (via its exit code)."""
     proc = subprocess.run(
-        [GITLEAKS, "git", ".", "--no-banner", "--redact", "--exit-code", "1",
-         "--report-format", "json", "--report-path", str(repo / "report.json"),
-         "-i", str(empty_ignore), *extra],
-        cwd=repo, capture_output=True, text=True,
+        [
+            GITLEAKS,
+            "git",
+            ".",
+            "--no-banner",
+            "--redact",
+            "--exit-code",
+            "1",
+            "--report-format",
+            "json",
+            "--report-path",
+            str(repo / "report.json"),
+            "-i",
+            str(empty_ignore),
+            *extra,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
     assert proc.returncode in (0, 1), proc.stderr
     import json
+
     return len(json.loads((repo / "report.json").read_text()) or [])
 
 
@@ -146,8 +162,8 @@ def repo(tmp_path: Path) -> Path:
     r = tmp_path / "repo"
     r.mkdir()
     _git(r, "init", "-q", "-b", "main", ".")
-    _commit_secret(r, "old-config.txt", seed=1)      # root commit
-    (r / "old-config.txt").unlink()                  # deleted, but still in history
+    _commit_secret(r, "old-config.txt", seed=1)  # root commit
+    (r / "old-config.txt").unlink()  # deleted, but still in history
     _git(r, "add", "-A")
     _git(r, "commit", "-qm", "remove the config")
 
@@ -180,5 +196,6 @@ def test_head_scope_still_scans_deleted_history(repo, tmp_path):
     empty.write_text("")
     _scan(repo, empty, "--log-opts=--full-history HEAD")
     import json
+
     findings = json.loads((repo / "report.json").read_text())
     assert [f["File"] for f in findings] == ["old-config.txt"]
