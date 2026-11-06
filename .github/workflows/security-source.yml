@@ -386,7 +386,9 @@ jobs:
 
           FILES="$PYTHON_REQS"
           if [ "$PYTHON_UV" = "true" ]; then
-            uv export --format requirements-txt --no-emit-project \
+            # --frozen: read uv.lock as is; it needs no interpreter, so a project pinned to
+            # another Python than the one setup-uv installed still exports.
+            uv export --frozen --format requirements-txt --no-emit-project \
               --no-hashes --all-extras --no-dev > /tmp/uv-reqs.txt
             FILES=/tmp/uv-reqs.txt
           fi
