@@ -52,10 +52,9 @@ convention = "google"
 "packages/openapi-surface/tests/test_writable_fields.py" = ["D205"]
 "packages/pytest-egress-guard/pytest_egress_guard/plugin.py" = ["D102", "D103"]
 "packages/pytest-egress-guard/tests/test_plugin.py" = ["SIM115"]
-"scripts/governance.py" = ["D103"]
-"scripts/governance_audit.py" = ["B007", "B905", "D101", "D102", "D103", "E741"]
+"scripts/governance.py" = ["D101", "D103"]
+"scripts/governance_audit.py" = ["B905", "D101", "D102", "D103", "E741"]
 "scripts/linear_link.py" = ["D103"]
-"scripts/notify_scheduled_failure.py" = ["D103"]
 "scripts/requirements_closure.py" = ["D103", "D301"]
 "scripts/runtime_gate.py" = ["D103"]
 "scripts/security_exceptions.py" = ["D101", "D103"]
@@ -63,7 +62,6 @@ convention = "google"
 "tests/test_gitleaks_scan_scope.py" = ["D205"]
 "tests/test_runtime_gate.py" = ["D205"]
 "tests/test_security_exceptions.py" = ["D205", "D301", "E402", "E741"]
-"tests/test_security_image.py" = ["D205"]
 
 [tool.ruff.format]
 quote-style = "double"
