@@ -1,4 +1,5 @@
 """linear-link passes a PR only with a magic-word GRA link, or as a listed exemption."""
+
 from __future__ import annotations
 
 import json
@@ -12,9 +13,16 @@ from scripts import linear_link as ll
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _pr(body: str | None = "", *, head: str = "fix/thing", base: str = "dev",
-        login: str = "octo", user_type: str = "User", labels: tuple[str, ...] = (),
-        head_repo: str | None = "Gradient-DS/x") -> dict:
+def _pr(
+    body: str | None = "",
+    *,
+    head: str = "fix/thing",
+    base: str = "dev",
+    login: str = "octo",
+    user_type: str = "User",
+    labels: tuple[str, ...] = (),
+    head_repo: str | None = "Gradient-DS/x",
+) -> dict:
     return {
         "body": body,
         "head": {"ref": head, "repo": {"full_name": head_repo} if head_repo else None},
@@ -24,46 +32,55 @@ def _pr(body: str | None = "", *, head: str = "fix/thing", base: str = "dev",
     }
 
 
-@pytest.mark.parametrize("body", [
-    "## Linear\n\nFixes GRA-123",
-    "fixes GRA-1",
-    "Closes GRA-9, GRA-10",
-    "Resolved: GRA-42",
-    "Part of GRA-491",
-    "part  of GRA-491 and Fixes GRA-474",
-    "Refs GRA-7",
-    "Related to GRA-7",
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "## Linear\n\nFixes GRA-123",
+        "fixes GRA-1",
+        "Closes GRA-9, GRA-10",
+        "Resolved: GRA-42",
+        "Part of GRA-491",
+        "part  of GRA-491 and Fixes GRA-474",
+        "Refs GRA-7",
+        "Related to GRA-7",
+    ],
+)
 def test_magic_word_link_passes(body: str) -> None:
     assert ll.verdict(_pr(body))[0]
 
 
-@pytest.mark.parametrize("body", [
-    None,
-    "",
-    "GRA-123",
-    "Fixes #12",
-    "Fixes GRA-",
-    "Fixes ABC-123",
-    "prefixes GRA-123",
-    "## Linear\n\nFixes GRA-",
-    "## Linear\n\n<!-- Fixes GRA-123 when this PR completes the ticket -->",
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        "",
+        "GRA-123",
+        "Fixes #12",
+        "Fixes GRA-",
+        "Fixes ABC-123",
+        "prefixes GRA-123",
+        "## Linear\n\nFixes GRA-",
+        "## Linear\n\n<!-- Fixes GRA-123 when this PR completes the ticket -->",
+    ],
+)
 def test_missing_link_fails(body: str | None) -> None:
     passes, reason = ll.verdict(_pr(body))
     assert not passes
     assert "no-ticket" in reason
 
 
-@pytest.mark.parametrize("pr", [
-    _pr(login="dependabot[bot]", user_type="Bot"),
-    _pr(login="renovate[bot]"),
-    _pr(head="dev", base="test"),
-    _pr(head="test", base="main"),
-    _pr(labels=("no-ticket",)),
-    _pr(head_repo="outsider/x"),
-    _pr(head_repo=None),
-])
+@pytest.mark.parametrize(
+    "pr",
+    [
+        _pr(login="dependabot[bot]", user_type="Bot"),
+        _pr(login="renovate[bot]"),
+        _pr(head="dev", base="test"),
+        _pr(head="test", base="main"),
+        _pr(labels=("no-ticket",)),
+        _pr(head_repo="outsider/x"),
+        _pr(head_repo=None),
+    ],
+)
 def test_exemptions_pass(pr: dict) -> None:
     assert ll.verdict(pr)[0]
 
@@ -72,8 +89,9 @@ def test_github_flow_pr_into_main_needs_a_link() -> None:
     assert not ll.verdict(_pr(head="feat/x", base="main"))[0]
 
 
-def test_main_reads_the_event_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                   capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_reads_the_event_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"pull_request": _pr("no link")}))
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))

@@ -16,6 +16,7 @@ so anything else keeps being resolved.
 Prints one line per file, `<mode>\t<path>\t<reason>`, mode `no-deps` or
 `resolve`.
 """
+
 from __future__ import annotations
 
 import argparse

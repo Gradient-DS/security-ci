@@ -72,7 +72,11 @@ def test_label_batches_skip_archive_and_respect_the_api_limit():
 
 def test_development_blocks_deletion_force_push_and_direct_push():
     assert [r["type"] for r in rulesets()["development"]["rules"]] == [
-        "deletion", "non_fast_forward", "pull_request", "required_status_checks"]
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+    ]
 
 
 def teams_config():
@@ -109,7 +113,8 @@ def test_plan_creates_missing_teams_and_grants_every_repo():
     changes = plan_teams(DESIRED, org(teams={"security": IN_STEP["security"]}))
     assert Change("create", "employees") in changes and Change("create", "admins") in changes
     assert [c for c in changes if c.team == "employees" and c.kind == "add-member"] == [
-        Change("add-member", "employees", m) for m in ("ann", "bob", "owner")]
+        Change("add-member", "employees", m) for m in ("ann", "bob", "owner")
+    ]
     assert Change("grant", "admins", "web", "admin") in changes
     assert not [c for c in changes if c.team == "security"]  # "gone" is archived or deleted: skipped
 
@@ -119,8 +124,11 @@ def test_plan_is_empty_when_teams_match():
 
 
 def test_plan_corrects_drift_but_leaves_archived_repos_alone():
-    teams = {**IN_STEP, "admins": ({"owner", "bob"}, {"app": "push", "web": "admin", "old": "admin"}),
-             "security": ({"ann"}, {"app": "push", "web": "push"})}
+    teams = {
+        **IN_STEP,
+        "admins": ({"owner", "bob"}, {"app": "push", "web": "admin", "old": "admin"}),
+        "security": ({"ann"}, {"app": "push", "web": "push"}),
+    }
     assert plan_teams(DESIRED, org(teams=teams)) == [
         Change("remove-member", "admins", "bob"),
         Change("grant", "admins", "app", "admin"),
@@ -134,11 +142,13 @@ def test_new_repo_gets_both_org_wide_teams():
 
 
 def test_direct_grants_prune_only_what_teams_cover():
-    direct = {"app": {"ann": "push", "bob": "maintain", "owner": "admin", "guest": "admin"},
-              "web": {"bob": "pull"}}
+    direct = {"app": {"ann": "push", "bob": "maintain", "owner": "admin", "guest": "admin"}, "web": {"bob": "pull"}}
     prune, kept = plan_direct(DESIRED, org(teams=IN_STEP, direct=direct))
-    assert prune == [Change("prune-direct", "ann", "app", "push"), Change("prune-direct", "owner", "app", "admin"),
-                     Change("prune-direct", "bob", "web", "pull")]
+    assert prune == [
+        Change("prune-direct", "ann", "app", "push"),
+        Change("prune-direct", "owner", "app", "admin"),
+        Change("prune-direct", "bob", "web", "pull"),
+    ]
     assert kept == ["keep direct grant of bob (maintain) on app: more than the teams give"]  # guest: outside
 
 

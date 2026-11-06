@@ -1,0 +1,36 @@
+# Org baseline (security-ci pre-commit/). Fast checks only; tests and type checks run in CI.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  # The repo's own eslint/prettier, on staged files only. Add these only once
+  # that lint is clean. In CI, pass the package dirs as `node-dirs` to the
+  # pre-commit workflow so `npm ci` has run before the hooks do.
+  # - repo: local
+  #   hooks:
+  #     - id: eslint
+  #       name: eslint
+  #       language: system
+  #       entry: npx --no-install eslint --max-warnings=0
+  #       files: \.(ts|tsx|js|jsx|svelte)$
+  #     - id: prettier
+  #       name: prettier
+  #       language: system
+  #       entry: npx --no-install prettier --check
+  #       files: \.(ts|tsx|js|jsx|svelte|css|json|md)$

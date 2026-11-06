@@ -1,4 +1,5 @@
 """runtime-security's optional cached build: off by default, exact when on."""
+
 from __future__ import annotations
 
 import json
@@ -74,9 +75,17 @@ def _plan(tmp_path: Path, scope: str, write: str, cache_from: str, config: dict)
     fake.write_text(f"#!/bin/sh\ncat '{tmp_path / 'cfg.json'}'\n")
     fake.chmod(0o755)
     out = tmp_path / "out"
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path),
-           "GITHUB_OUTPUT": str(out), "COMPOSE_FILE_PATH": "c.yml", "CACHE_SCOPE": scope,
-           "CACHE_WRITE": write, "CACHE_FROM": cache_from, "OVERRIDE": str(tmp_path / "o.json")}
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_OUTPUT": str(out),
+        "COMPOSE_FILE_PATH": "c.yml",
+        "CACHE_SCOPE": scope,
+        "CACHE_WRITE": write,
+        "CACHE_FROM": cache_from,
+        "OVERRIDE": str(tmp_path / "o.json"),
+    }
     proc = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
     override = json.loads((tmp_path / "o.json").read_text()) if proc.returncode == 0 else {}
     return proc.returncode, override, out.read_text() if out.exists() else ""
@@ -86,14 +95,20 @@ def test_plan_scopes_cache_per_service_and_tags_what_compose_expects(tmp_path):
     rc, override, out = _plan(tmp_path, "rt", "true", "type=registry,ref=r:c\n", COMPOSE_CONFIG)
     assert rc == 0
     assert out == "targets=app,named\n"
-    assert override == {"target": {
-        "app": {"tags": ["proj-app"],
+    assert override == {
+        "target": {
+            "app": {
+                "tags": ["proj-app"],
                 "cache-from": ["type=gha,scope=rt-app", "type=registry,ref=r:c"],
-                "cache-to": ["type=gha,scope=rt-app,mode=max"]},
-        "named": {"tags": ["ghcr.io/o/named:ci"],
-                  "cache-from": ["type=gha,scope=rt-named", "type=registry,ref=r:c"],
-                  "cache-to": ["type=gha,scope=rt-named,mode=max"]},
-    }}
+                "cache-to": ["type=gha,scope=rt-app,mode=max"],
+            },
+            "named": {
+                "tags": ["ghcr.io/o/named:ci"],
+                "cache-from": ["type=gha,scope=rt-named", "type=registry,ref=r:c"],
+                "cache-to": ["type=gha,scope=rt-named,mode=max"],
+            },
+        }
+    }
 
 
 @pytest.mark.parametrize("scope,write", [("rt", "false"), ("", "true")])

@@ -57,25 +57,25 @@ CANARY_HOST: str = "egress-canary.invalid"
 REFLECTION_PROBE: str = "gdsprobe7f3a"
 
 FETCH_URLS: tuple[str, ...] = (
-    f"http://169.254.169.254/latest/meta-data/{REFLECTION_PROBE}",   # cloud metadata
-    f"http://[::ffff:169.254.169.254]/{REFLECTION_PROBE}",           # same, IPv6-mapped
-    f"http://127.0.0.1:5002/healthz?{REFLECTION_PROBE}",             # loopback to self
-    f"http://internal-service.local/{REFLECTION_PROBE}",             # cluster-internal name
-    f"http://{CANARY_HOST}/{REFLECTION_PROBE}",                      # unique canary
-    f"file:///etc/passwd#{REFLECTION_PROBE}",                        # LFI
-    f"file:///proc/self/environ#{REFLECTION_PROBE}",                 # LFI, env secrets
+    f"http://169.254.169.254/latest/meta-data/{REFLECTION_PROBE}",  # cloud metadata
+    f"http://[::ffff:169.254.169.254]/{REFLECTION_PROBE}",  # same, IPv6-mapped
+    f"http://127.0.0.1:5002/healthz?{REFLECTION_PROBE}",  # loopback to self
+    f"http://internal-service.local/{REFLECTION_PROBE}",  # cluster-internal name
+    f"http://{CANARY_HOST}/{REFLECTION_PROBE}",  # unique canary
+    f"file:///etc/passwd#{REFLECTION_PROBE}",  # LFI
+    f"file:///proc/self/environ#{REFLECTION_PROBE}",  # LFI, env secrets
 )
 
 WRAPPERS: tuple[str, ...] = (
     "{url}",
-    "![x]({url})",                                    # markdown image
-    "[click]({url})",                                 # markdown link
+    "![x]({url})",  # markdown image
+    "[click]({url})",  # markdown link
     '<img src="{url}">',
     '<iframe src="{url}"></iframe>',
     '<object data="{url}"></object>',
     '<link rel="stylesheet" href="{url}">',
-    '<style>@import url("{url}");</style>',           # CSS fetch in a renderer
-    '<!DOCTYPE r [<!ENTITY x SYSTEM "{url}">]><r>&x;</r>',   # XXE
+    '<style>@import url("{url}");</style>',  # CSS fetch in a renderer
+    '<!DOCTYPE r [<!ENTITY x SYSTEM "{url}">]><r>&x;</r>',  # XXE
 )
 
 

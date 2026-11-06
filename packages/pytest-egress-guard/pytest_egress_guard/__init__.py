@@ -1,9 +1,9 @@
 from .plugin import (
     DEFAULT_ALLOWED_HOSTS,
+    SENSITIVE_PREFIXES,
     Attempt,
     EgressDenied,
     EgressLog,
-    SENSITIVE_PREFIXES,
 )
 
 __all__ = [

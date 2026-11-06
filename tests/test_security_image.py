@@ -1,4 +1,5 @@
 """Wiring of the reusable image-scan workflow's optional inputs."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,8 +19,7 @@ def _inputs() -> dict:
 
 
 def _build_step() -> dict:
-    steps = [s for s in _wf()["jobs"]["scan"]["steps"]
-             if str(s.get("uses", "")).startswith("docker/build-push-action")]
+    steps = [s for s in _wf()["jobs"]["scan"]["steps"] if str(s.get("uses", "")).startswith("docker/build-push-action")]
     assert len(steps) == 1
     return steps[0]
 
@@ -46,7 +46,6 @@ def test_scan_job_names_what_failed_even_when_it_fails():
     steps = {s.get("id"): s for s in _wf()["jobs"]["scan"]["steps"]}
     assert steps["verdict"]["if"] == "always()"
     outputs = _wf()["jobs"]["scan"]["outputs"]
-    assert outputs == {"failed": "${{ steps.verdict.outputs.failed }}",
-                       "image": "${{ steps.verdict.outputs.image }}"}
+    assert outputs == {"failed": "${{ steps.verdict.outputs.failed }}", "image": "${{ steps.verdict.outputs.image }}"}
     for sid in ("trivyignore", "build", "trivy"):
         assert sid in steps

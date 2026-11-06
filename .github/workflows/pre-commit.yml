@@ -1,0 +1,156 @@
+name: pre-commit
+
+# Backstop for the org pre-commit baseline (pre-commit/ in this repo): runs the
+# caller's .pre-commit-config.yaml on every file, then checks its ruff config
+# against pre-commit/ruff-baseline.toml. Call it from a job named `pre-commit`,
+# so the check is `pre-commit / pre-commit`:
+#
+#   pre-commit:
+#     if: github.event.pull_request.draft != true
+#     uses: Gradient-DS/security-ci/.github/workflows/pre-commit.yml@<sha> # v13
+#     secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      node-dirs:
+        description: >-
+          Space-separated dirs holding a package-lock.json, relative to the repo
+          root. `npm ci` runs in each before the hooks, so local eslint/prettier
+          hooks find their packages. Empty (the default) installs nothing.
+        type: string
+        default: ''
+      node-version:
+        description: 'Node version for node-dirs.'
+        type: string
+        default: '22'
+      skip-baseline:
+        description: >-
+          Skip the ruff baseline check, for a repository that follows an
+          upstream's style (open-webui). A repository whose custom property
+          `source` is `upstream-mirror` skips it without this input.
+        type: boolean
+        default: false
+      tooling-ref:
+        description: >-
+          Ref of Gradient-DS/security-ci to take the baseline script from. Empty
+          (the default) means the commit this workflow file was loaded from
+          (job.workflow_sha). Override only to test a paired change on a branch.
+        type: string
+        default: ''
+      timeout-minutes:
+        description: 'Job timeout.'
+        type: number
+        default: 15
+      runs-on:
+        description: >-
+          Runner label. Self-hosted runners (e.g. soev-scw on scaleway-ci) must
+          be restricted to private repos.
+        type: string
+        default: 'ubuntu-latest'
+    secrets:
+      SECURITY_CI_APP_ID:
+        description: >-
+          App ID of the org GitHub App that can read Gradient-DS/security-ci, for
+          the baseline script checkout. Named as the organisation secret, so
+          `secrets: inherit` passes it. Not needed with skip-baseline.
+        required: false
+      SECURITY_CI_APP_PRIVATE_KEY:
+        description: 'Private key of the same App. Paired with SECURITY_CI_APP_ID.'
+        required: false
+
+jobs:
+  # No `permissions:` here: the job inherits the calling job's grant, and it
+  # only reads the repository.
+  pre-commit:
+    name: pre-commit
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
+      # 'true' or 'false'. The repository object in the event payload carries
+      # the org custom properties, so a mirror needs no input.
+      BASELINE: ${{ !inputs.skip-baseline && github.event.repository.custom_properties.source != 'upstream-mirror' }}
+      # security-ci checks itself with its own checkout: no second clone.
+      TOOLING_PATH: ${{ github.repository == 'Gradient-DS/security-ci' && inputs.tooling-ref == '' && '.' || '.security-tooling' }}
+      PRE_COMMIT_VERSION: '4.6.2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.7'
+          cache-suffix: pre-commit
+
+      - name: Resolve the tooling ref
+        id: tooling-ref
+        if: env.BASELINE == 'true' && env.TOOLING_PATH != '.'
+        env:
+          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
+        run: |
+          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - id: tooling-token
+        if: env.BASELINE == 'true' && env.TOOLING_PATH != '.' && env.TOOLING_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.SECURITY_CI_APP_ID }} # the App ID is accepted as JWT issuer
+          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
+          owner: Gradient-DS
+          repositories: security-ci
+
+      # Untracked, so pre-commit (which runs on `git ls-files`) and the
+      # baseline script never see it.
+      - name: Check out shared tooling
+        if: env.BASELINE == 'true' && env.TOOLING_PATH != '.'
+        uses: actions/checkout@v6
+        with:
+          repository: Gradient-DS/security-ci
+          token: ${{ steps.tooling-token.outputs.token || github.token }}
+          ref: ${{ steps.tooling-ref.outputs.ref }}
+          path: ${{ env.TOOLING_PATH }}
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - name: Install Node
+        if: inputs.node-dirs != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: npm ci
+        id: node
+        if: inputs.node-dirs != ''
+        env:
+          NODE_DIRS: ${{ inputs.node-dirs }}
+        run: |
+          set -euo pipefail
+          set -f
+          for d in $NODE_DIRS; do
+            echo "::group::npm ci in $d"
+            npm ci --prefix "$d" --no-audit --no-fund
+            echo "::endgroup::"
+          done
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit on all files
+        id: pre-commit
+        run: |
+          set -euo pipefail
+          if [ ! -f .pre-commit-config.yaml ]; then
+            echo "::error::No .pre-commit-config.yaml; copy one from pre-commit/ in Gradient-DS/security-ci"
+            exit 1
+          fi
+          uvx "pre-commit@${PRE_COMMIT_VERSION}" run --all-files --show-diff-on-failure --color=always
+
+      - name: Ruff config meets the org baseline
+        id: baseline
+        if: ${{ !cancelled() && env.BASELINE == 'true' }}
+        run: uv run --no-project --python 3.12 "$TOOLING_PATH/scripts/ruff_baseline.py"

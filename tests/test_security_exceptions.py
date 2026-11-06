@@ -1,11 +1,22 @@
 import datetime as dt
 import pathlib
+
 import pytest
+
 from scripts.security_exceptions import (
     TRIVY_IGNORE_KINDS,
-    ExceptionFileError, NpmAuditError, SecurityException, load,
-    expired, gitleaksignore_text, main, npm_unexcepted, pip_audit_args,
-    trivyignore_text, trivyignore_yaml_text, write_trivyignore,
+    ExceptionFileError,
+    NpmAuditError,
+    SecurityException,
+    expired,
+    gitleaksignore_text,
+    load,
+    main,
+    npm_unexcepted,
+    pip_audit_args,
+    trivyignore_text,
+    trivyignore_yaml_text,
+    write_trivyignore,
 )
 
 VALID_ENTRY = """
@@ -25,16 +36,20 @@ exceptions:
     recheck: 2026-12-01
 """
 
+
 def _write(tmp_path, text):
     p = tmp_path / "security-exceptions.yml"
     p.write_text(text)
     return p
 
+
 def test_missing_file_yields_no_exceptions(tmp_path):
     assert load(tmp_path / "nope.yml") == []
 
+
 def test_empty_file_yields_no_exceptions(tmp_path):
     assert load(_write(tmp_path, "")) == []
+
 
 def test_valid_entry_is_parsed(tmp_path):
     (exc,) = load(_write(tmp_path, VALID_ENTRY))
@@ -44,35 +59,38 @@ def test_valid_entry_is_parsed(tmp_path):
     assert exc.scanner == "pip-audit"
     assert exc.recheck == dt.date(2026, 12, 1)
 
+
 def test_missing_required_field_is_rejected(tmp_path):
     text = VALID_ENTRY.replace('    approved_by: "@some-reviewer"\n', "")
     with pytest.raises(ExceptionFileError, match="approved_by"):
         load(_write(tmp_path, text))
+
 
 def test_unknown_scanner_is_rejected(tmp_path):
     text = VALID_ENTRY.replace("scanner: pip-audit", "scanner: snyk")
     with pytest.raises(ExceptionFileError, match="snyk"):
         load(_write(tmp_path, text))
 
+
 def test_duplicate_id_is_rejected(tmp_path):
     doubled = VALID_ENTRY + VALID_ENTRY.split("exceptions:")[1]
     with pytest.raises(ExceptionFileError, match="duplicate"):
         load(_write(tmp_path, doubled))
+
 
 def test_non_date_recheck_is_rejected(tmp_path):
     text = VALID_ENTRY.replace("recheck: 2026-12-01", 'recheck: "soon"')
     with pytest.raises(ExceptionFileError, match="recheck"):
         load(_write(tmp_path, text))
 
+
 def test_whitespace_only_required_field_is_rejected(tmp_path):
-    text = VALID_ENTRY.replace(
-        "    usage_analysis: >-\n", "    usage_analysis: '   '\n"
-    )
+    text = VALID_ENTRY.replace("    usage_analysis: >-\n", "    usage_analysis: '   '\n")
     # collapse the now-orphaned continuation lines of the folded block
     text = "\n".join(
-        l for l in text.split("\n")
-        if not l.startswith("      The advisory needs")
-        and not l.startswith("      server-side templates")
+        l
+        for l in text.split("\n")
+        if not l.startswith("      The advisory needs") and not l.startswith("      server-side templates")
     )
     with pytest.raises(ExceptionFileError, match="usage_analysis"):
         load(_write(tmp_path, text))
@@ -80,9 +98,14 @@ def test_whitespace_only_required_field_is_rejected(tmp_path):
 
 def _exc(id_, scanner="pip-audit", recheck=dt.date(2026, 12, 1)):
     return SecurityException(
-        id=id_, package="pkg", scanner=scanner, reason="r",
-        replacement_considered="rc", usage_analysis="ua",
-        approved_by="@r", recheck=recheck,
+        id=id_,
+        package="pkg",
+        scanner=scanner,
+        reason="r",
+        replacement_considered="rc",
+        usage_analysis="ua",
+        approved_by="@r",
+        recheck=recheck,
     )
 
 
@@ -113,83 +136,109 @@ def test_trivyignore_text_lists_ids_with_comments():
 
 
 def test_npm_unexcepted_flags_high_and_critical_only():
-    audit = {"vulnerabilities": {
-        "lodash":  {"severity": "critical", "via": [{"url": "https://github.com/advisories/GHSA-aaa"}]},
-        "chalk":   {"severity": "moderate", "via": [{"url": "https://github.com/advisories/GHSA-bbb"}]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "lodash": {"severity": "critical", "via": [{"url": "https://github.com/advisories/GHSA-aaa"}]},
+            "chalk": {"severity": "moderate", "via": [{"url": "https://github.com/advisories/GHSA-bbb"}]},
+        }
+    }
     assert npm_unexcepted(audit, []) == ["GHSA-aaa"]
 
 
 def test_npm_unexcepted_respects_exceptions():
-    audit = {"vulnerabilities": {
-        "lodash": {"severity": "critical", "via": [{"url": "https://github.com/advisories/GHSA-aaa"}]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "lodash": {"severity": "critical", "via": [{"url": "https://github.com/advisories/GHSA-aaa"}]},
+        }
+    }
     assert npm_unexcepted(audit, [_exc("GHSA-aaa", scanner="npm")]) == []
 
 
 def test_npm_unexcepted_handles_mixed_via_shapes():
-    audit = {"vulnerabilities": {
-        "lodash": {"severity": "critical", "via": [
-            "some-transitive-pkg",
-            {"url": "https://github.com/advisories/GHSA-aaa"},
-        ]},
-        "only-string-via": {"severity": "high", "via": ["lodash"]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "lodash": {
+                "severity": "critical",
+                "via": [
+                    "some-transitive-pkg",
+                    {"url": "https://github.com/advisories/GHSA-aaa"},
+                ],
+            },
+            "only-string-via": {"severity": "high", "via": ["lodash"]},
+        }
+    }
     # The string via resolves to lodash's advisory, reported once.
     assert npm_unexcepted(audit, []) == ["GHSA-aaa"]
 
 
 def test_npm_unexcepted_inherited_finding_is_covered_by_the_source_advisory():
-    audit = {"vulnerabilities": {
-        "sharp": {"severity": "high", "via": [
-            {"url": "https://github.com/advisories/GHSA-aaa", "severity": "high"},
-        ]},
-        "onnx": {"severity": "moderate", "via": [
-            {"url": "https://github.com/advisories/GHSA-mod", "severity": "moderate"},
-        ]},
-        "@scope/lib": {"severity": "high", "via": ["onnx", "sharp"]},
-        "app": {"severity": "high", "via": ["@scope/lib"]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "sharp": {
+                "severity": "high",
+                "via": [
+                    {"url": "https://github.com/advisories/GHSA-aaa", "severity": "high"},
+                ],
+            },
+            "onnx": {
+                "severity": "moderate",
+                "via": [
+                    {"url": "https://github.com/advisories/GHSA-mod", "severity": "moderate"},
+                ],
+            },
+            "@scope/lib": {"severity": "high", "via": ["onnx", "sharp"]},
+            "app": {"severity": "high", "via": ["@scope/lib"]},
+        }
+    }
     assert npm_unexcepted(audit, []) == ["GHSA-aaa"]
     assert npm_unexcepted(audit, [_exc("GHSA-aaa", scanner="npm")]) == []
 
 
 def test_npm_unexcepted_inherited_chain_without_blocking_advisory_falls_back_to_package():
-    audit = {"vulnerabilities": {
-        "a": {"severity": "high", "via": ["b"]},
-        "b": {"severity": "high", "via": ["a"]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "a": {"severity": "high", "via": ["b"]},
+            "b": {"severity": "high", "via": ["a"]},
+        }
+    }
     # A cycle with no advisory must not loop, and must still fail closed.
     assert npm_unexcepted(audit, []) == ["package:a", "package:b"]
 
 
 def test_npm_unexcepted_reports_blocking_entry_with_unresolvable_via():
-    audit = {"vulnerabilities": {
-        "left-pad": {"severity": "critical", "via": [{"source": 123, "title": "t"}]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "left-pad": {"severity": "critical", "via": [{"source": 123, "title": "t"}]},
+        }
+    }
     assert npm_unexcepted(audit, []) == ["package:left-pad"]
 
 
 def test_npm_unexcepted_package_fallback_respects_exception_on_package_name():
-    audit = {"vulnerabilities": {
-        "left-pad": {"severity": "critical", "via": [{"source": 123, "title": "t"}]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "left-pad": {"severity": "critical", "via": [{"source": 123, "title": "t"}]},
+        }
+    }
     assert npm_unexcepted(audit, [_exc("left-pad", scanner="npm")]) == []
 
 
 def test_npm_unexcepted_severity_comparison_is_case_insensitive():
-    audit = {"vulnerabilities": {
-        "lodash": {"severity": "Critical", "via": [{"url": "https://github.com/advisories/GHSA-aaa"}]},
-        "chalk": {"severity": "HIGH", "via": [{"url": "https://github.com/advisories/GHSA-bbb"}]},
-        "quiet": {"severity": "Moderate", "via": [{"url": "https://github.com/advisories/GHSA-ccc"}]},
-    }}
+    audit = {
+        "vulnerabilities": {
+            "lodash": {"severity": "Critical", "via": [{"url": "https://github.com/advisories/GHSA-aaa"}]},
+            "chalk": {"severity": "HIGH", "via": [{"url": "https://github.com/advisories/GHSA-bbb"}]},
+            "quiet": {"severity": "Moderate", "via": [{"url": "https://github.com/advisories/GHSA-ccc"}]},
+        }
+    }
     assert npm_unexcepted(audit, []) == ["GHSA-aaa", "GHSA-bbb"]
 
 
 def test_npm_unexcepted_rejects_error_shaped_report():
     """`npm audit` writes {"error": ...} on registry outage / ENOLOCK and still
     exits non-zero; the workflow's `|| true` swallows that, so an audit report
-    with no `vulnerabilities` key must fail closed, never read as clean."""
+    with no `vulnerabilities` key must fail closed, never read as clean.
+    """
     audit = {"error": {"code": "ENOLOCK", "summary": "no lockfile", "detail": "…"}}
     with pytest.raises(NpmAuditError, match="ENOLOCK"):
         npm_unexcepted(audit, [])
@@ -215,9 +264,7 @@ def test_cli_fails_on_error_shaped_npm_audit_json(tmp_path, capsys):
 
 def test_exception_id_with_newline_is_rejected(tmp_path):
     """An id carrying a newline would inject extra keys into $GITHUB_OUTPUT."""
-    text = VALID_ENTRY.replace(
-        "id: PYSEC-2026-3412", 'id: "GHSA-a\\nEVIL=1"'
-    )
+    text = VALID_ENTRY.replace("id: PYSEC-2026-3412", 'id: "GHSA-a\\nEVIL=1"')
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
 
@@ -233,9 +280,7 @@ def test_exception_id_with_trailing_newline_only_is_rejected(tmp_path):
     tests above append content *after* the newline, which `.match()` already
     caught, so neither exercises this quirk.
     """
-    text = VALID_ENTRY.replace(
-        "id: PYSEC-2026-3412", 'id: "GHSA-a\\n"'
-    )
+    text = VALID_ENTRY.replace("id: PYSEC-2026-3412", 'id: "GHSA-a\\n"')
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
 
@@ -249,20 +294,19 @@ def test_exception_ids_with_shell_metacharacters_are_rejected(tmp_path, bad):
 
 def test_trivyignore_text_excludes_other_scanners():
     """Negative isolation: a pip-audit exception must never reach trivy."""
-    text = trivyignore_text([
-        _exc("CVE-1", scanner="trivy"),
-        _exc("PYSEC-2026-3412", scanner="pip-audit"),
-        _exc("GHSA-aaa", scanner="npm"),
-    ])
+    text = trivyignore_text(
+        [
+            _exc("CVE-1", scanner="trivy"),
+            _exc("PYSEC-2026-3412", scanner="pip-audit"),
+            _exc("GHSA-aaa", scanner="npm"),
+        ]
+    )
     assert "CVE-1" in text
     assert "PYSEC-2026-3412" not in text
     assert "GHSA-aaa" not in text
 
 
-GITLEAKS_FINGERPRINT = (
-    "ba0a0dcd23d3a8b864fe258686e77422db7397d4:infrastructure/README.md:"
-    "curl-auth-header:70"
-)
+GITLEAKS_FINGERPRINT = "ba0a0dcd23d3a8b864fe258686e77422db7397d4:infrastructure/README.md:curl-auth-header:70"
 
 
 def test_gitleaks_entry_with_fingerprint_id_is_accepted(tmp_path):
@@ -276,7 +320,8 @@ def test_gitleaks_entry_with_fingerprint_id_is_accepted(tmp_path):
 def test_gitleaks_fingerprint_id_is_rejected_for_pip_audit_scanner(tmp_path):
     """Proves the strict ID_PATTERN still applies to scanners other than
     gitleaks: a gitleaks-shaped id (colons, slashes) is not a valid pip-audit
-    id even though it would be fine for gitleaks itself."""
+    id even though it would be fine for gitleaks itself.
+    """
     text = VALID_ENTRY.replace("id: PYSEC-2026-3412", f"id: {GITLEAKS_FINGERPRINT}")
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
@@ -284,18 +329,14 @@ def test_gitleaks_fingerprint_id_is_rejected_for_pip_audit_scanner(tmp_path):
 
 def test_gitleaks_id_with_newline_is_rejected(tmp_path):
     text = VALID_ENTRY.replace("scanner: pip-audit", "scanner: gitleaks")
-    text = text.replace(
-        "id: PYSEC-2026-3412", 'id: "abc:def:rule:1\\nEVIL=1"'
-    )
+    text = text.replace("id: PYSEC-2026-3412", 'id: "abc:def:rule:1\\nEVIL=1"')
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
 
 
 def test_gitleaks_id_with_space_is_rejected(tmp_path):
     text = VALID_ENTRY.replace("scanner: pip-audit", "scanner: gitleaks")
-    text = text.replace(
-        "id: PYSEC-2026-3412", 'id: "abc:def:rule id:1"'
-    )
+    text = text.replace("id: PYSEC-2026-3412", 'id: "abc:def:rule id:1"')
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
 
@@ -307,9 +348,7 @@ def test_gitleaks_id_with_trailing_newline_only_is_rejected(tmp_path):
     `.match()` would wrongly accept and `.fullmatch()` correctly rejects.
     """
     text = VALID_ENTRY.replace("scanner: pip-audit", "scanner: gitleaks")
-    text = text.replace(
-        "id: PYSEC-2026-3412", 'id: "abc:def:rule:1\\n"'
-    )
+    text = text.replace("id: PYSEC-2026-3412", 'id: "abc:def:rule:1\\n"')
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
 
@@ -322,13 +361,16 @@ def test_gitleaksignore_text_lists_ids_with_comments():
 
 def test_gitleaksignore_text_excludes_other_scanners():
     """Negative isolation: exceptions for other scanners must never reach
-    the gitleaksignore file."""
-    text = gitleaksignore_text([
-        _exc(GITLEAKS_FINGERPRINT, scanner="gitleaks"),
-        _exc("PYSEC-2026-3412", scanner="pip-audit"),
-        _exc("CVE-1", scanner="trivy"),
-        _exc("GHSA-aaa", scanner="npm"),
-    ])
+    the gitleaksignore file.
+    """
+    text = gitleaksignore_text(
+        [
+            _exc(GITLEAKS_FINGERPRINT, scanner="gitleaks"),
+            _exc("PYSEC-2026-3412", scanner="pip-audit"),
+            _exc("CVE-1", scanner="trivy"),
+            _exc("GHSA-aaa", scanner="npm"),
+        ]
+    )
     assert GITLEAKS_FINGERPRINT in text
     assert "PYSEC-2026-3412" not in text
     assert "CVE-1" not in text
@@ -366,8 +408,7 @@ SCOPED_PATHS = """    paths:
 
 
 def _scoped(extra=SCOPED_PATHS):
-    return TRIVY_ENTRY.replace("    recheck: 2026-12-01\n",
-                               "    recheck: 2026-12-01\n" + extra)
+    return TRIVY_ENTRY.replace("    recheck: 2026-12-01\n", "    recheck: 2026-12-01\n" + extra)
 
 
 def test_paths_is_optional_and_defaults_to_tree_wide(tmp_path):
@@ -386,22 +427,21 @@ def test_paths_is_parsed_into_a_tuple(tmp_path):
 def test_paths_on_a_non_trivy_scanner_is_rejected(tmp_path):
     """A `paths` list on a gitleaks or pip-audit entry would read as scoped
     while actually suppressing tree-wide — the worst possible failure mode for
-    this field, so it is a hard error rather than a silent no-op."""
+    this field, so it is a hard error rather than a silent no-op.
+    """
     text = _scoped().replace("scanner: trivy", "scanner: pip-audit")
     with pytest.raises(ExceptionFileError, match="only trivy and semgrep support"):
         load(_write(tmp_path, text))
 
 
 def test_empty_paths_list_is_rejected(tmp_path):
-    text = TRIVY_ENTRY.replace("    recheck: 2026-12-01\n",
-                               "    recheck: 2026-12-01\n    paths: []\n")
+    text = TRIVY_ENTRY.replace("    recheck: 2026-12-01\n", "    recheck: 2026-12-01\n    paths: []\n")
     with pytest.raises(ExceptionFileError, match="non-empty list"):
         load(_write(tmp_path, text))
 
 
 def test_paths_must_be_a_list_not_a_bare_string(tmp_path):
-    text = TRIVY_ENTRY.replace("    recheck: 2026-12-01\n",
-                               '    recheck: 2026-12-01\n    paths: "a.yaml"\n')
+    text = TRIVY_ENTRY.replace("    recheck: 2026-12-01\n", '    recheck: 2026-12-01\n    paths: "a.yaml"\n')
     with pytest.raises(ExceptionFileError, match="non-empty list"):
         load(_write(tmp_path, text))
 
@@ -419,13 +459,12 @@ def test_path_with_embedded_newline_is_rejected(tmp_path):
         load(_write(tmp_path, text))
 
 
-@pytest.mark.parametrize(
-    "bad", ["**", "*", "a/*.yaml", "previder-prod/**/x.yaml", "a?.yaml", "a[0-9].yaml"]
-)
+@pytest.mark.parametrize("bad", ["**", "*", "a/*.yaml", "previder-prod/**/x.yaml", "a?.yaml", "a[0-9].yaml"])
 def test_paths_with_glob_metacharacters_are_rejected(tmp_path, bad):
     """Trivy matches `paths` as a glob, so `["**"]` reads in review as a scoped
     exception while suppressing the entire tree — exactly the failure mode the
-    field exists to prevent. A scoped entry must name its files."""
+    field exists to prevent. A scoped entry must name its files.
+    """
     text = _scoped(f'    paths:\n      - "{bad}"\n')
     with pytest.raises(ExceptionFileError, match="glob metacharacter"):
         load(_write(tmp_path, text))
@@ -439,9 +478,15 @@ def test_empty_path_entry_is_rejected(tmp_path):
 
 def test_yaml_ignorefile_carries_paths_per_entry():
     scoped = SecurityException(
-        id="KSV017", package="infra", scanner="trivy", reason="r",
-        replacement_considered="rc", usage_analysis="ua", approved_by="@r",
-        recheck=dt.date(2026, 12, 1), paths=("a/b.yaml",),
+        id="KSV017",
+        package="infra",
+        scanner="trivy",
+        reason="r",
+        replacement_considered="rc",
+        usage_analysis="ua",
+        approved_by="@r",
+        recheck=dt.date(2026, 12, 1),
+        paths=("a/b.yaml",),
     )
     doc = _yaml.safe_load(trivyignore_yaml_text([scoped]))
     (mis,) = doc["misconfigurations"]
@@ -459,33 +504,47 @@ def test_yaml_ignorefile_lists_each_id_under_all_four_kinds():
     """The plain format is kind-agnostic — one id there suppresses a finding of
     any kind. Trivy's YAML format has four: vulnerabilities, misconfigurations,
     secrets and licenses. Listing the id under every one of them is what keeps
-    the YAML file equivalent rather than narrower."""
+    the YAML file equivalent rather than narrower.
+    """
     doc = _yaml.safe_load(trivyignore_yaml_text([_exc("CVE-1", scanner="trivy")]))
     assert set(doc) == set(TRIVY_IGNORE_KINDS)
     assert set(TRIVY_IGNORE_KINDS) == {
-        "vulnerabilities", "misconfigurations", "secrets", "licenses",
+        "vulnerabilities",
+        "misconfigurations",
+        "secrets",
+        "licenses",
     }
     for kind in TRIVY_IGNORE_KINDS:
         assert [e["id"] for e in doc[kind]] == ["CVE-1"], kind
 
 
 def test_yaml_ignorefile_excludes_other_scanners():
-    doc = _yaml.safe_load(trivyignore_yaml_text([
-        _exc("CVE-1", scanner="trivy"),
-        _exc("PYSEC-2026-3412", scanner="pip-audit"),
-        _exc("GHSA-aaa", scanner="npm"),
-    ]))
+    doc = _yaml.safe_load(
+        trivyignore_yaml_text(
+            [
+                _exc("CVE-1", scanner="trivy"),
+                _exc("PYSEC-2026-3412", scanner="pip-audit"),
+                _exc("GHSA-aaa", scanner="npm"),
+            ]
+        )
+    )
     assert [e["id"] for e in doc["misconfigurations"]] == ["CVE-1"]
     assert [e["id"] for e in doc["vulnerabilities"]] == ["CVE-1"]
 
 
 def test_yaml_statement_is_a_single_line():
     """A folded `reason` spans several lines; the statement must not, or the
-    generated document changes shape with the wording."""
+    generated document changes shape with the wording.
+    """
     multi = SecurityException(
-        id="KSV017", package="infra", scanner="trivy",
-        reason="first line\nsecond line", replacement_considered="rc",
-        usage_analysis="ua", approved_by="@r", recheck=dt.date(2026, 12, 1),
+        id="KSV017",
+        package="infra",
+        scanner="trivy",
+        reason="first line\nsecond line",
+        replacement_considered="rc",
+        usage_analysis="ua",
+        approved_by="@r",
+        recheck=dt.date(2026, 12, 1),
     )
     (mis,) = _yaml.safe_load(trivyignore_yaml_text([multi]))["misconfigurations"]
     assert "\n" not in mis["statement"]
@@ -494,7 +553,8 @@ def test_yaml_statement_is_a_single_line():
 
 def test_write_trivyignore_uses_plain_format_when_nothing_is_scoped(tmp_path):
     """Regression guard for the other eight repos: adding this field must not
-    change the file any repo without `paths` gets."""
+    change the file any repo without `paths` gets.
+    """
     base = tmp_path / "security-exceptions.trivyignore"
     written = write_trivyignore([_exc("CVE-1", scanner="trivy")], str(base))
     assert written == base
@@ -504,12 +564,19 @@ def test_write_trivyignore_uses_plain_format_when_nothing_is_scoped(tmp_path):
 
 def test_write_trivyignore_switches_to_yaml_when_any_entry_is_scoped(tmp_path):
     """Trivy picks its parser by extension, so the YAML format has to land on
-    a *.yaml path — the switch is a rename, not just a different body."""
+    a *.yaml path — the switch is a rename, not just a different body.
+    """
     base = tmp_path / "security-exceptions.trivyignore"
     scoped = SecurityException(
-        id="KSV017", package="infra", scanner="trivy", reason="r",
-        replacement_considered="rc", usage_analysis="ua", approved_by="@r",
-        recheck=dt.date(2026, 12, 1), paths=("a/b.yaml",),
+        id="KSV017",
+        package="infra",
+        scanner="trivy",
+        reason="r",
+        replacement_considered="rc",
+        usage_analysis="ua",
+        approved_by="@r",
+        recheck=dt.date(2026, 12, 1),
+        paths=("a/b.yaml",),
     )
     written = write_trivyignore([scoped, _exc("CVE-1", scanner="trivy")], str(base))
     assert written.name.endswith(".trivyignore.yaml")
@@ -520,10 +587,10 @@ def test_write_trivyignore_switches_to_yaml_when_any_entry_is_scoped(tmp_path):
 
 def test_cli_prints_the_path_it_wrote(tmp_path, capsys):
     """The workflows capture stdout to learn which file to hand trivy, so the
-    path must be the only thing on it."""
+    path must be the only thing on it.
+    """
     base = tmp_path / "security-exceptions.trivyignore"
-    rc = main(["--file", str(_write(tmp_path, _scoped())),
-               "--emit-trivyignore", str(base)])
+    rc = main(["--file", str(_write(tmp_path, _scoped())), "--emit-trivyignore", str(base)])
     assert rc == 0
     out = capsys.readouterr().out.strip()
     assert out == f"{base}.yaml"
@@ -532,8 +599,7 @@ def test_cli_prints_the_path_it_wrote(tmp_path, capsys):
 
 def test_cli_prints_plain_path_when_nothing_is_scoped(tmp_path, capsys):
     base = tmp_path / "security-exceptions.trivyignore"
-    rc = main(["--file", str(_write(tmp_path, TRIVY_ENTRY)),
-               "--emit-trivyignore", str(base)])
+    rc = main(["--file", str(_write(tmp_path, TRIVY_ENTRY)), "--emit-trivyignore", str(base)])
     assert rc == 0
     assert capsys.readouterr().out.strip() == str(base)
 
@@ -542,11 +608,18 @@ def test_yaml_ignorefile_has_no_anchors_or_aliases():
     """Each id is written under both kinds; if the two entries shared one
     `paths` list, PyYAML would emit `paths: *id001` for the second. Valid YAML,
     but a generated file someone reads mid-incident should not need aliases
-    resolved to show which files an exception covers."""
+    resolved to show which files an exception covers.
+    """
     scoped = SecurityException(
-        id="KSV017", package="infra", scanner="trivy", reason="r",
-        replacement_considered="rc", usage_analysis="ua", approved_by="@r",
-        recheck=dt.date(2026, 12, 1), paths=("a/b.yaml", "c/d.yaml"),
+        id="KSV017",
+        package="infra",
+        scanner="trivy",
+        reason="r",
+        replacement_considered="rc",
+        usage_analysis="ua",
+        approved_by="@r",
+        recheck=dt.date(2026, 12, 1),
+        paths=("a/b.yaml", "c/d.yaml"),
     )
     text = trivyignore_yaml_text([scoped])
     assert "&id" not in text and "*id" not in text
@@ -573,6 +646,7 @@ exceptions:
     recheck: 2026-12-01
 """
 
+
 def test_gitleaks_ids_expand_to_one_exception_each(tmp_path):
     excs = load(_write(tmp_path, GITLEAKS_IDS_ENTRY))
     assert [e.id for e in excs] == [
@@ -580,12 +654,11 @@ def test_gitleaks_ids_expand_to_one_exception_each(tmp_path):
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:docs/b.md:generic-api-key:12",
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:docs/a.md:generic-api-key:10",
     ]
-    assert {e.reason for e in excs} == {
-        "False positive; the same placeholder token in three deleted docs."
-    }
+    assert {e.reason for e in excs} == {"False positive; the same placeholder token in three deleted docs."}
     text = gitleaksignore_text(excs)
     for e in excs:
         assert e.id in text
+
 
 def test_gitleaks_ids_duplicate_within_group_is_rejected(tmp_path):
     text = GITLEAKS_IDS_ENTRY.replace(
@@ -594,6 +667,7 @@ def test_gitleaks_ids_duplicate_within_group_is_rejected(tmp_path):
     )
     with pytest.raises(ExceptionFileError, match="duplicate"):
         load(_write(tmp_path, text))
+
 
 def test_gitleaks_ids_duplicate_across_entries_is_rejected(tmp_path):
     single = GITLEAKS_IDS_ENTRY.split("exceptions:")[1].replace(
@@ -606,6 +680,7 @@ def test_gitleaks_ids_duplicate_across_entries_is_rejected(tmp_path):
     with pytest.raises(ExceptionFileError, match="duplicate"):
         load(_write(tmp_path, GITLEAKS_IDS_ENTRY + single))
 
+
 def test_gitleaks_ids_with_whitespace_is_rejected(tmp_path):
     text = GITLEAKS_IDS_ENTRY.replace(
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:docs/a.md:generic-api-key:10",
@@ -614,10 +689,12 @@ def test_gitleaks_ids_with_whitespace_is_rejected(tmp_path):
     with pytest.raises(ExceptionFileError, match="invalid id"):
         load(_write(tmp_path, text))
 
+
 def test_ids_on_non_gitleaks_scanner_is_rejected(tmp_path):
     text = GITLEAKS_IDS_ENTRY.replace("scanner: gitleaks", "scanner: pip-audit")
     with pytest.raises(ExceptionFileError, match="only gitleaks"):
         load(_write(tmp_path, text))
+
 
 def test_ids_and_id_together_is_rejected(tmp_path):
     text = GITLEAKS_IDS_ENTRY.replace(
@@ -625,6 +702,7 @@ def test_ids_and_id_together_is_rejected(tmp_path):
     )
     with pytest.raises(ExceptionFileError, match="both"):
         load(_write(tmp_path, text))
+
 
 def test_empty_ids_is_rejected(tmp_path):
     text = GITLEAKS_IDS_ENTRY.replace(
@@ -648,7 +726,9 @@ def test_empty_ids_is_rejected(tmp_path):
 import json as _json
 
 from scripts.security_exceptions import (  # noqa: E402
-    SemgrepReportError, semgrep_args, semgrep_unexcepted,
+    SemgrepReportError,
+    semgrep_args,
+    semgrep_unexcepted,
 )
 
 SHELL_RULE = "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true"
@@ -675,9 +755,15 @@ def _semgrep_scoped(paths=("src/ops/run.py",)):
 
 def _sx(id_, paths=()):
     return SecurityException(
-        id=id_, package="pkg", scanner="semgrep", reason="r",
-        replacement_considered="rc", usage_analysis="ua",
-        approved_by="@r", recheck=dt.date(2026, 12, 1), paths=tuple(paths),
+        id=id_,
+        package="pkg",
+        scanner="semgrep",
+        reason="r",
+        replacement_considered="rc",
+        usage_analysis="ua",
+        approved_by="@r",
+        recheck=dt.date(2026, 12, 1),
+        paths=tuple(paths),
     )
 
 
@@ -690,9 +776,19 @@ def test_semgrep_rule_id_entry_is_accepted(tmp_path):
     assert exc.scanner == "semgrep" and exc.id == SHELL_RULE and exc.paths == ()
 
 
-@pytest.mark.parametrize("bad", [
-    "-rule", "--config=p/none", "rule id", "rule;id", "rule$(id)", "a/b", "a:b", "rule\n",
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "-rule",
+        "--config=p/none",
+        "rule id",
+        "rule;id",
+        "rule$(id)",
+        "a/b",
+        "a:b",
+        "rule\n",
+    ],
+)
 def test_semgrep_ids_outside_the_strict_pattern_are_rejected(tmp_path, bad):
     # Ids are word-split into the semgrep command line: no option-shaped id,
     # no whitespace, no shell or path characters.

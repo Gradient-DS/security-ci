@@ -10,7 +10,6 @@ import pathlib
 import urllib.request
 
 import pytest
-
 from pytest_egress_guard import EgressDenied
 
 
@@ -68,7 +67,7 @@ def test_allows_ordinary_file_read(deny_egress, tmp_path):
 
 
 def test_guards_are_removed_after_the_test():
-    """monkeypatch must restore open, or every later test is poisoned.
+    """Monkeypatch must restore open, or every later test is poisoned.
 
     Reads this file rather than a system path: `/etc/hostname` does not exist
     on macOS, and a teardown check that fails for its own reasons proves
