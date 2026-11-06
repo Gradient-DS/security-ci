@@ -30,3 +30,23 @@ testpaths = [
     "packages/openapi-surface/tests",
 ]
 pythonpath = ["."]
+
+# Org ruff baseline (pre-commit/ruff-baseline.toml).
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "D"]
+ignore = ["D100", "D104", "D105", "D107", "D417"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D1"]
+"packages/*/tests/**" = ["D1"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true

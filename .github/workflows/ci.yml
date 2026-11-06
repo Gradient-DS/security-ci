@@ -7,15 +7,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
-  actionlint:
+  # Hygiene, ruff, gitleaks and actionlint from .pre-commit-config.yaml, then
+  # the ruff baseline check: this repo's own copy of the shared workflow.
+  pre-commit:
     if: github.event.pull_request.draft != true
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Run actionlint
-        run: |
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
-          ./actionlint -color
+    uses: ./.github/workflows/pre-commit.yml
+    secrets: inherit
 
   pytest:
     if: github.event.pull_request.draft != true
@@ -59,15 +56,15 @@ jobs:
 
   # The required check: reports on every non-draft run, red unless both jobs passed.
   gate:
-    needs: [actionlint, pytest]
+    needs: [pre-commit, pytest]
     if: ${{ always() && github.event.pull_request.draft != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Every job passed
         env:
-          ACTIONLINT: ${{ needs.actionlint.result }}
+          PRE_COMMIT: ${{ needs.pre-commit.result }}
           PYTEST: ${{ needs.pytest.result }}
         run: |
-          echo "actionlint: $ACTIONLINT, pytest: $PYTEST"
-          test "$ACTIONLINT" = success && test "$PYTEST" = success
+          echo "pre-commit: $PRE_COMMIT, pytest: $PYTEST"
+          test "$PRE_COMMIT" = success && test "$PYTEST" = success
