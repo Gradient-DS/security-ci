@@ -1,11 +1,11 @@
 name: Governance audit
 
 # Nightly: checks every Gradient-DS repo against its `tier` and `branch_model`
-# (governance/README.md, "Audit") and keeps one `Governance audit: <repo>` issue
-# per repo in step, then gives every non-archived repo the team grants in
-# governance/teams.json (new repos get `employees` and `admins`). The App token
-# reads every repo, writes those issues and the team grants; the workflow's own
-# GITHUB_TOKEN only checks out this repository.
+# (governance/README.md, "Audit") and writes the findings to the run summary,
+# then gives every non-archived repo the team grants in governance/teams.json
+# (new repos get `employees` and `admins`). The App token reads every repo and
+# writes the team grants; the workflow's own GITHUB_TOKEN only checks out this
+# repository.
 
 on:
   schedule:

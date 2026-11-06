@@ -92,8 +92,8 @@ repos with no findings.
 
 The audit runs as the GitHub App `gradient-ds-governance-audit`, installed on all
 repositories with read access to Metadata, Contents, Checks and Actions, org
-Custom properties, org Administration and org Members, and read/write on Issues
-and Administration (the team grant sync: `PUT /orgs/{org}/teams/{team}/repos/...`
+Custom properties, org Administration and org Members, and read/write on
+Administration (the team grant sync: `PUT /orgs/{org}/teams/{team}/repos/...`
 needs repository Administration write and org Members read).
 Its id and private key are the secrets `GOVERNANCE_APP_ID` and
 `GOVERNANCE_APP_PRIVATE_KEY`.
