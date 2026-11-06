@@ -39,6 +39,7 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "D"]
 ignore = ["D100", "D104", "D105", "D107", "D417"]
+unfixable = ["D403"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
