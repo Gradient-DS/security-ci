@@ -1,0 +1,3 @@
+# Commits that only reformat; `git config blame.ignoreRevsFile .git-blame-ignore-revs` to skip them in blame.
+# ruff format at 120
+2ebde486d970ec0f93dc2e1c27b134977ec5e77e
