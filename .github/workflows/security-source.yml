@@ -62,9 +62,10 @@ on:
         default: 'ubuntu-latest'
       notify-on-schedule-failure:
         description: >-
-          v9. On a failed `schedule` run, open or comment on a `security`-labelled
-          issue. Off by default, as in security-image.yml; a caller that turns it
-          on grants `issues: write` (and `contents: read`) on the calling job.
+          Deprecated, no-op: Gradient does not use GitHub Issues. A
+          failed scheduled run is a red run with the failed scanners in the job
+          summary. Kept so callers that still pass it keep working; drop it,
+          and any `issues: write` granted for it.
         type: boolean
         default: false
     secrets:
@@ -608,89 +609,4 @@ jobs:
           if [ -n "$joined" ]; then
             echo "::error::Failed scanners: $joined"
             exit 1
-          fi
-
-  notify-scheduled-failure:
-    name: Notify on scheduled failure
-    needs: [scan]
-    if: >-
-      always()
-      && inputs.notify-on-schedule-failure
-      && github.event_name == 'schedule'
-      && contains(needs.*.result, 'failure')
-    runs-on: ${{ inputs.runs-on }}
-    timeout-minutes: 10
-    # No `permissions:` here on purpose: the job inherits the calling job's
-    # grant. Requesting `issues: write` would make every caller that does not
-    # grant it fail at startup, even with this input off.
-    env:
-      TOOLING_APP_ID: ${{ secrets.SECURITY_CI_APP_ID }}
-    steps:
-      - name: Resolve the tooling ref
-        id: tooling-ref
-        env:
-          # job.workflow_sha is the commit of THIS reusable workflow file, not
-          # the caller's. An empty ref would make checkout fall back to the
-          # default branch silently, so it fails instead.
-          REF: ${{ inputs.tooling-ref || job.workflow_sha }}
-        run: |
-          [ -n "$REF" ] || { echo "::error::could not resolve the security-ci tooling ref"; exit 1; }
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-
-      - id: tooling-token
-        # secrets are not readable from a step `if`, so the job exposes the id as env.
-        if: env.TOOLING_APP_ID != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ secrets.SECURITY_CI_APP_ID }} # the App ID is accepted as JWT issuer
-          private-key: ${{ secrets.SECURITY_CI_APP_PRIVATE_KEY }}
-          owner: Gradient-DS
-          repositories: security-ci
-
-      - uses: actions/checkout@v6
-        with:
-          repository: Gradient-DS/security-ci
-          token: ${{ steps.tooling-token.outputs.token || github.token }}
-          ref: ${{ steps.tooling-ref.outputs.ref }}
-          path: .security-tooling
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Open or update the tracking issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # The scanners that failed, as the scan job's verdict step named
-          # them; empty when the job died before reaching it.
-          FAILED_JOBS: ${{ needs.scan.outputs.failed }}
-          TOOLING: .security-tooling
-        run: |
-          # pipefail: without it a failing `printf`/`gh` in the pipelines below
-          # is masked by jq's exit status, and the notifier would act on an
-          # empty job list or an empty issue list.
-          set -o pipefail
-
-          REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          export REPO_NAME
-
-          python -c 'import os,sys; sys.path.insert(0,os.environ["TOOLING"]); from scripts.notify_scheduled_failure import issue_title; print(issue_title(os.environ["REPO_NAME"]),end="")' > /tmp/issue-title.txt
-          python -c 'import os,sys; sys.path.insert(0,os.environ["TOOLING"]); from scripts.notify_scheduled_failure import issue_body; failed=[j for j in os.environ["FAILED_JOBS"].split(",") if j]; print(issue_body(os.environ["REPO_NAME"],os.environ["RUN_URL"],failed),end="")' > /tmp/issue-body.md
-
-          TITLE=$(cat /tmp/issue-title.txt)
-
-          # Idempotent: `gh label create` exits non-zero if the label already
-          # exists, which is fine. Without this the notifier dies on any repo
-          # that has never had a `security` label.
-          gh label create security --color B60205 \
-            --description "Automated security scan findings" 2>/dev/null || true
-
-          # Exact title match via jq — `gh issue list --search` is fuzzy
-          # full-text and can match an unrelated issue or miss the real one.
-          EXISTING=$(gh issue list --state open --label security --json number,title \
-            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
-
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body-file /tmp/issue-body.md
-          else
-            gh issue create --title "$TITLE" --body-file /tmp/issue-body.md --label security
           fi

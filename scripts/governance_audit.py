@@ -4,10 +4,10 @@
 
 Reads the `tier` and `branch_model` properties, then checks each non-archived
 repo against what its tier promises (governance/README.md, "Audit"). Findings go
-to one issue per repo, `Governance audit: <repo>`, labelled `governance`: opened
-or updated while there are findings, closed once the repo is clean. Org ruleset
-drift goes to `Governance audit: org` in security-ci. --dry-run prints the
-findings and the summary and touches no issue.
+to the job summary, one table per repo, and to stdout; org ruleset drift goes
+under "Org". The audit changes nothing and exits 0 with findings: they are a
+to-do list, not a failure. --dry-run is accepted for the workflow's input and
+changes nothing here.
 
 The checks are pure functions over fetched data; `GitHub` is the only part that
 talks to the API. Token: GH_TOKEN, else GITHUB_TOKEN, else `gh auth token`.
@@ -34,8 +34,6 @@ from scripts import security_exceptions
 from scripts.governance import CHECKS_RULESET, ORG, ROOT
 
 SECURITY_CI = "security-ci"
-LABEL = "governance"
-TITLE_PREFIX = "Governance audit"
 MAX_PIN_AGE_DAYS = 120
 EXCEPTIONS_FILE = ".github/security-exceptions.yml"
 REUSABLE = re.compile(r"^Gradient-DS/security-ci/\.github/workflows/[^@]+\.ya?ml@(.+)$")
@@ -45,10 +43,6 @@ TEMPLATE_SECURITY = re.compile(r"^Gradient-DS/soev-project-template/\.github/wor
 SHA = re.compile(r"[0-9a-f]{40}")
 TIERS = ("production", "development", "experiment")
 MODELS = ("github-flow", "gitflow")
-
-
-def issue_title(repo: str) -> str:
-    return f"{TITLE_PREFIX}: {repo}"
 
 
 # --- Draft pull requests never run CI --------------------------------------
@@ -370,18 +364,6 @@ def check_org_rulesets(expected: dict[str, dict], live: list[dict]) -> list[str]
 
 # --- Reporting ----------------------------------------------------------------
 
-def issue_body(repo: str, findings: list[str], bypasses: list[dict], run_url: str) -> str:
-    lines = [f"The nightly governance audit found {len(findings)} problem(s) in **{repo}**.", ""]
-    lines += [f"- [ ] {f}" for f in findings]
-    if bypasses:
-        lines += ["", "Ruleset bypasses in the last day (informational):", ""]
-        lines += [f"- {b.get('actor_name')} pushed `{b.get('ref')}` at {b.get('pushed_at')}" for b in bypasses]
-    lines += ["", f"Run: {run_url}" if run_url else "",
-              "This issue is updated every night and closed when the audit comes back clean. "
-              "What each check means: Gradient-DS/security-ci, governance/README.md."]
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def summary(results: dict[str, tuple[Repo, list[str]]], org_findings: list[str]) -> str:
     lines = ["# Governance audit", "", "| Repo | Tier | Branch model | Findings |", "| --- | --- | --- | --- |"]
     for name, (repo, findings) in sorted(results.items(), key=lambda kv: kv[0].lower()):
@@ -389,6 +371,12 @@ def summary(results: dict[str, tuple[Repo, list[str]]], org_findings: list[str])
     ready = sorted(n for n, (r, f) in results.items() if r.tier == "development" and not f)
     lines += ["", "## Ready for production", ""] + ([f"- {n}" for n in ready] or ["None."])
     lines += ["", "## Org", ""] + ([f"- {f}" for f in org_findings] or ["No ruleset drift."])
+    with_findings = [(n, f) for n, (_, f) in sorted(results.items(), key=lambda kv: kv[0].lower()) if f]
+    if with_findings:
+        lines += ["", "## Findings"]
+        for name, findings in with_findings:
+            lines += ["", f"### {name}", "", "| Finding |", "| --- |"]
+            lines += ["| " + f.replace("|", "\\|") + " |" for f in findings]
     bypassed = [(n, b) for n, (r, _) in sorted(results.items()) for b in r.bypasses]
     if bypassed:
         lines += ["", "## Ruleset bypasses, last day", ""]
@@ -517,24 +505,6 @@ def commit_dates(gh: GitHub, repos: list[Repo]) -> dict[str, dt.date | None]:
     return out
 
 
-def sync_issue(gh: GitHub, repo: str, title: str, body: str | None) -> None:
-    """Open or update the issue when there is a body, close it when there is none."""
-    try:
-        open_ = [i for i in gh.paginate(f"repos/{ORG}/{repo}/issues?state=open&labels={LABEL}")
-                 if i["title"] == title and "pull_request" not in i]
-        if body is not None and open_:
-            gh.request("PATCH", f"repos/{ORG}/{repo}/issues/{open_[0]['number']}", {"body": body})
-        elif body is not None:
-            gh.request("POST", f"repos/{ORG}/{repo}/issues", {"title": title, "body": body, "labels": [LABEL]})
-        for issue in open_ if body is None else []:
-            gh.request("POST", f"repos/{ORG}/{repo}/issues/{issue['number']}/comments",
-                       {"body": "The governance audit is clean for this repo. Closing."})
-            gh.request("PATCH", f"repos/{ORG}/{repo}/issues/{issue['number']}",
-                       {"state": "closed", "state_reason": "completed"})
-    except ApiError as exc:  # e.g. 410: issues disabled
-        print(f"::warning::could not sync issue in {repo}: {exc}")
-
-
 def token() -> str:
     for var in ("GH_TOKEN", "GITHUB_TOKEN"):
         if os.environ.get(var):
@@ -561,11 +531,9 @@ def org_rulesets(gh: GitHub, metas: list[dict]) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dry-run", action="store_true", help="print findings; touch no issue")
-    args = ap.parse_args(argv)
+    ap.add_argument("--dry-run", action="store_true", help="no-op: the audit only reports")
+    ap.parse_args(argv)
     gh, today = GitHub(token()), dt.date.today()
-    run_url = (f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
-               f"{os.environ['GITHUB_RUN_ID']}" if os.environ.get("GITHUB_RUN_ID") else "")
 
     props = {p["repository_name"]: {v["property_name"]: v["value"] for v in p["properties"]}
              for p in gh.paginate(f"orgs/{ORG}/properties/values")}
@@ -584,18 +552,10 @@ def main(argv: list[str] | None = None) -> int:
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
             fh.write(text)
-    if args.dry_run:
-        for name, (repo, findings) in sorted(results.items(), key=lambda kv: kv[0].lower()):
-            for f in findings:
-                print(f"{name}: {f}")
-        print(text)
-        return 0
-
-    for name, (repo, findings) in results.items():
-        body = issue_body(name, findings, repo.bypasses, run_url) if findings else None
-        sync_issue(gh, name, issue_title(name), body)
-    sync_issue(gh, SECURITY_CI, issue_title("org"),
-               issue_body("the org rulesets", org_findings, [], run_url) if org_findings else None)
+    for name, (_, findings) in sorted(results.items(), key=lambda kv: kv[0].lower()):
+        for f in findings:
+            print(f"{name}: {f}")
+    print(text)
     return 0
 
 

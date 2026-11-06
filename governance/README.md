@@ -71,8 +71,8 @@ the run summary lists what is waiting.
 ## Audit
 
 `.github/workflows/governance-audit.yml` runs `scripts/governance_audit.py` every
-night at 03:17 UTC, and on demand (`dry-run` prints the findings and touches no
-issue). It checks every non-archived repo:
+night at 03:17 UTC, and on demand. The audit only reads and reports; it opens
+no issues and changes no setting. It checks every non-archived repo:
 
 | Tier | Checked |
 | --- | --- |
@@ -84,9 +84,9 @@ The org rulesets on GitHub must match `rulesets/*.json`, and no other org rulese
 may exist. Ruleset bypasses on production repos in the last day are listed in
 the run summary for information.
 
-Findings go to one issue per repo, titled `Governance audit: <repo>` and labelled
-`governance`: opened or updated while there are findings, closed with a comment
-once the repo is clean. Org drift goes to `Governance audit: org` here. The run
+Findings go to the run summary, one table per repo, and to the job log; org
+drift is listed under "Org". Findings do not fail the run: the audit stays
+green and the summary is the to-do list. The run
 summary has a table per repo and a "Ready for production" list: development
 repos with no findings.
 
