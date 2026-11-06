@@ -154,6 +154,8 @@ def permission(role_name: str) -> str:
 
 @dataclass
 class OrgState:
+    """Org membership, non-archived repos and current team and direct grants, as read from the API."""
+
     members: set[str]
     owners: set[str]
     repos: list[str]  # non-archived
@@ -163,6 +165,8 @@ class OrgState:
 
 @dataclass(frozen=True)
 class Change:
+    """One planned team change; `team` holds the user's login for prune-direct."""
+
     kind: str  # create | add-member | remove-member | grant | revoke | prune-direct
     team: str  # team slug; the user's login for prune-direct
     target: str = ""
