@@ -172,6 +172,7 @@ jobs:
           TOOLING_PATH: ${{ env.TOOLING_PATH }}
           EXCEPTIONS_FILE: ${{ inputs.exceptions-file }}
           GITLEAKS_TAG: v8.30.1
+          GH_TOKEN: ${{ github.token }}
           # Written outside the workspace: a `.gitleaksignore` at the repo
           # root would silently overwrite a caller-owned file of that name.
           # --gitleaks-ignore-path accepts either a file or a directory
@@ -189,17 +190,18 @@ jobs:
             --emit-gitleaksignore "$GITLEAKSIGNORE_PATH"
 
           VERSION="${GITLEAKS_TAG#v}"
-          BASE="https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_TAG}"
           TARBALL="gitleaks_${VERSION}_linux_x64.tar.gz"
           WORK="$(mktemp -d)"
 
           # Download, then verify against the checksums file published with the
           # release, then extract. `gitleaks version` only catches a truncated
           # download; it cannot detect a substituted binary.
-          curl -sSfL -o "$WORK/$TARBALL" "$BASE/$TARBALL"
-          curl -sSfL -o "$WORK/checksums.txt" "$BASE/gitleaks_${VERSION}_checksums.txt"
+          # Through the API (`gh release download`), not github.com/.../releases/download:
+          # that web route has returned 504 for every repo while the API route kept working.
+          gh release download "$GITLEAKS_TAG" -R gitleaks/gitleaks -D "$WORK" \
+            -p "$TARBALL" -p "gitleaks_${VERSION}_checksums.txt"
 
-          ( cd "$WORK" && grep " ${TARBALL}\$" checksums.txt | sha256sum -c - ) || {
+          ( cd "$WORK" && grep " ${TARBALL}\$" "gitleaks_${VERSION}_checksums.txt" | sha256sum -c - ) || {
             echo "::error::gitleaks ${GITLEAKS_TAG} checksum verification failed — refusing to run an unverified binary"
             exit 1
           }
