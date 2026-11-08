@@ -8,6 +8,7 @@ changes nothing without --apply:
     python scripts/governance.py cleanup [--apply]
     python scripts/governance.py archive --labels labels.json [--apply]
     python scripts/governance.py teams [--prune-direct] [--grants-only] [--apply]
+    python scripts/governance.py settings [--apply]
 
 `labels.json` maps repo -> {"tier": ..., "branch_model": ...}; tier "archive"
 archives the repo instead of labelling it. After the first run the properties on
@@ -17,6 +18,7 @@ GitHub are the record; the nightly audit reads them there.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import subprocess
@@ -342,6 +344,28 @@ def cmd_teams(args: argparse.Namespace) -> None:
             fh.write("\n## Teams left for an org admin\n\n" + "".join(f"- {c}\n" for c in left))
 
 
+def plan_settings(live: dict, wanted: dict) -> dict:
+    """Return the settings in `wanted` that the repo does not have yet."""
+    return {key: value for key, value in wanted.items() if live.get(key) != value}
+
+
+def cmd_settings(args: argparse.Namespace) -> None:
+    """Merge settings from repo-settings.json on every non-archived repo; also part of the nightly sync."""
+    spec = load("repo-settings.json")
+    changed = 0
+    for repo in sorted(gh_items(f"orgs/{ORG}/repos?per_page=100&type=all"), key=lambda r: r["name"]):
+        name = repo["name"]
+        if repo["archived"] or any(fnmatch.fnmatch(name, pattern) for pattern in spec["exclude"]):
+            continue
+        diff = plan_settings(gh(f"repos/{ORG}/{name}"), spec["settings"])
+        if diff:
+            changed += 1
+            print(f"{name}: {diff}")
+            gh("-X", "PATCH", f"repos/{ORG}/{name}", body=diff, apply=args.apply)
+    if not changed:
+        print("repo settings match governance/repo-settings.json")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -351,6 +375,7 @@ def main() -> None:
         ("cleanup", cmd_cleanup, False),
         ("archive", cmd_archive, True),
         ("teams", cmd_teams, False),
+        ("settings", cmd_settings, False),
     ]:
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)

@@ -11,6 +11,7 @@ from scripts.governance import (
     label_batches,
     permission,
     plan_direct,
+    plan_settings,
     plan_teams,
 )
 
@@ -159,3 +160,19 @@ def test_unknown_custom_role_is_never_pruned():
 
 def test_role_names_map_to_api_permissions():
     assert [permission(r) for r in ("read", "triage", "write", "maintain", "admin")] == list(RANK)
+
+
+def test_plan_settings_returns_only_what_differs():
+    wanted = {"allow_squash_merge": False, "delete_branch_on_merge": True}
+    live = {"allow_squash_merge": True, "delete_branch_on_merge": True, "name": "x"}
+    assert plan_settings(live, wanted) == {"allow_squash_merge": False}
+    assert plan_settings({**live, "allow_squash_merge": False}, wanted) == {}
+
+
+def test_merge_commits_are_the_only_merge_method():
+    spec = json.loads((ROOT / "repo-settings.json").read_text())["settings"]
+    assert (spec["allow_merge_commit"], spec["allow_squash_merge"], spec["allow_rebase_merge"]) == (True, False, False)
+    for ruleset in rulesets().values():
+        for rule in ruleset["rules"]:
+            if rule["type"] == "pull_request":
+                assert rule["parameters"]["allowed_merge_methods"] == ["merge"]

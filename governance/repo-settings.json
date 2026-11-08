@@ -1,0 +1,10 @@
+{
+  "_comment": "Merge settings on every non-archived repo; applied by `scripts/governance.py settings` and the nightly sync. One merge method: merge commits, because we stack branches onto integration branches. Mirrors of upstream projects are left alone.",
+  "exclude": ["signalen-*"],
+  "settings": {
+    "allow_merge_commit": true,
+    "allow_squash_merge": false,
+    "allow_rebase_merge": false,
+    "delete_branch_on_merge": true
+  }
+}
