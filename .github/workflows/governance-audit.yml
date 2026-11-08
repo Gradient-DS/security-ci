@@ -65,3 +65,14 @@ jobs:
           args=(teams --grants-only)
           if [ "${DRY_RUN:-false}" != "true" ]; then args+=(--apply); fi
           uv run --no-dev python -m scripts.governance "${args[@]}"
+
+      - name: Sync repo merge settings
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          args=(settings)
+          if [ "${DRY_RUN:-false}" != "true" ]; then args+=(--apply); fi
+          uv run --no-dev python -m scripts.governance "${args[@]}"

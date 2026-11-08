@@ -68,6 +68,18 @@ repo, including one created that day, gets the grants of the teams that exist.
 Team creation and membership are left to an org admin running `teams --apply`;
 the run summary lists what is waiting.
 
+## Merge settings
+
+`repo-settings.json` sets one merge method, merge commits, and deletes head
+branches after merge on every non-archived repo except upstream mirrors. The org
+rulesets allow only merge commits too, so `squash` and `rebase` are refused.
+
+    python scripts/governance.py settings            # print the plan
+    python scripts/governance.py settings --apply    # change the repos
+
+The nightly audit job runs `settings --apply` as well, so a new repo gets them
+the night it appears.
+
 ## Audit
 
 `.github/workflows/governance-audit.yml` runs `scripts/governance_audit.py` every
