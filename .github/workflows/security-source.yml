@@ -406,17 +406,29 @@ jobs:
 
           LOGS=$(mktemp -d)
           audit() { # mode file -> writes <log>.out and <log>.rc
-            local mode=$1 f=$2 log frc=0
+            local mode=$1 f=$2 log frc attempt
             log="$LOGS/$(printf '%s' "$f" | tr '/' '_')"
-            # `|| frc=$?`: the step shell runs with -e, which would otherwise
-            # end the loop at the first file with a finding.
-            if [ "$mode" = "no-deps" ]; then
-              # shellcheck disable=SC2086
-              pip-audit --desc on --cache-dir "$VULN_CACHE" -r "$f" --no-deps --disable-pip $PIP_AUDIT_ARGS > "$log.out" 2>&1 || frc=$?
-            else
-              # shellcheck disable=SC2086
-              pip-audit --desc on --cache-dir "$VULN_CACHE" -r "$f" $PIP_AUDIT_ARGS > "$log.out" 2>&1 || frc=$?
-            fi
+            # Only a dropped download is retried. A finding also exits 1, but
+            # its output has none of these errors, so it fails first time.
+            for attempt in 1 2 3; do
+              frc=0
+              # `|| frc=$?`: the step shell runs with -e, which would otherwise
+              # end the loop at the first file with a finding.
+              if [ "$mode" = "no-deps" ]; then
+                # shellcheck disable=SC2086
+                pip-audit --desc on --cache-dir "$VULN_CACHE" -r "$f" --no-deps --disable-pip $PIP_AUDIT_ARGS > "$log.out" 2>&1 || frc=$?
+              else
+                # shellcheck disable=SC2086
+                pip-audit --desc on --cache-dir "$VULN_CACHE" -r "$f" $PIP_AUDIT_ARGS > "$log.out" 2>&1 || frc=$?
+              fi
+              if [ "$frc" = "0" ] || ! grep -qE 'IncompleteRead|Connection broken|ConnectionError|Read timed out' "$log.out"; then
+                break
+              fi
+              if [ "$attempt" != "3" ]; then
+                echo "pip-audit $f: network error on attempt $attempt, retrying"
+                sleep $((attempt * 10))
+              fi
+            done
             echo "$frc" > "$log.rc"
           }
           export -f audit
