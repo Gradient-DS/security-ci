@@ -19,7 +19,9 @@ open-webui, stays `own`.
 
 A production repo may add checks of its own: `repo-checks.json` lists them, and
 they live in one repo ruleset named `checks` that holds nothing else. Every check
-is pinned to GitHub Actions (integration 15368). Only `OrganizationAdmin` can bypass.
+is pinned to GitHub Actions (integration 15368). Only `OrganizationAdmin` can bypass, and on a
+production repo also that repo's admins: someone given the admin role on one
+repo can merge there without a review, and nowhere else.
 
 Changing a repo's tier or branch model is an org admin action. Changing the rules
 is a pull request here, followed by `scripts/governance.py rulesets --apply`.

@@ -40,9 +40,16 @@ def test_development_is_pr_only_and_requires_linear_link():
     assert required_checks(rulesets()["development"]) == [{"context": "linear-link", "integration_id": GITHUB_ACTIONS}]
 
 
-def test_only_org_admins_bypass():
-    for ruleset in rulesets().values():
-        assert [a["actor_type"] for a in ruleset["bypass_actors"]] == ["OrganizationAdmin"]
+REPO_ADMIN_ROLE = 5  # GitHub's id for the built-in repository admin role
+
+
+def test_only_admins_bypass():
+    for name, ruleset in rulesets().items():
+        actors = [(a["actor_type"], a["actor_id"]) for a in ruleset["bypass_actors"]]
+        expected = [("OrganizationAdmin", None)]
+        if name == "production":
+            expected.append(("RepositoryRole", REPO_ADMIN_ROLE))
+        assert actors == expected
 
 
 def test_rulesets_target_tier_properties():
